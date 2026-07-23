@@ -1,4 +1,34 @@
-# Telegram iOS Source Code Compilation Guide
+# Fastgram for iOS
+
+Fastgram is an unofficial Telegram client based on Telegram-iOS. Internal Bazel targets and module names remain `Telegram` to keep upstream synchronization manageable; the installed app name, bundle identifier and URL scheme are configured for Fastgram.
+
+## Private build configuration
+
+API credentials and Apple account values must not be committed. Create the ignored local configuration:
+
+```sh
+cp build-system/fastgram-configuration.example.json \
+  build-system/fastgram-local-configuration.json
+chmod 600 build-system/fastgram-local-configuration.json
+```
+
+Replace the placeholders with your own Telegram API ID/hash from [my.telegram.org](https://my.telegram.org/apps), Apple Team ID and final bundle identifier. Then pass:
+
+```sh
+--configurationPath=build-system/fastgram-local-configuration.json
+```
+
+Alternatively, set `FASTGRAM_BUNDLE_ID`, `FASTGRAM_API_ID`, `FASTGRAM_API_HASH` and `FASTGRAM_TEAM_ID`, then run:
+
+```sh
+python3 build-system/Make/GenerateFastgramConfiguration.py
+```
+
+GitHub Actions uses repository variables `FASTGRAM_BUNDLE_ID`, `FASTGRAM_TEAM_ID` and optionally `FASTGRAM_APPSTORE_ID`, plus encrypted secrets `FASTGRAM_API_ID` and `FASTGRAM_API_HASH`. Production certificates and provisioning profiles belong in a private signing store; its access key and password belong in encrypted CI secrets.
+
+The API hash is compiled into every Telegram client and can ultimately be recovered from a distributed binary. Keeping it outside Git protects it from casual reuse and source-history leaks; it does not make the shipped value cryptographically secret.
+
+## Upstream Telegram compilation guide
 
 We welcome all developers to use our API and source code to create applications on our platform.
 There are several things we require from **all developers** for the moment.

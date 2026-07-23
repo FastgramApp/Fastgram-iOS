@@ -50,6 +50,7 @@ load(
     "telegram_bundle_id",
     "telegram_aps_environment",
     "telegram_team_id",
+    "telegram_app_specific_url_scheme",
     "telegram_enable_icloud",
     "telegram_enable_siri",
 )
@@ -432,11 +433,13 @@ plist_fragment(
             <array>
                 <string>tg</string>
                 <string>tonsite</string>
+                <string>{telegram_app_specific_url_scheme}</string>
             </array>
         </dict>
     </array>
     """.format(
         telegram_bundle_id = telegram_bundle_id,
+        telegram_app_specific_url_scheme = telegram_app_specific_url_scheme,
     )
 )
 
@@ -629,7 +632,7 @@ plist_fragment(
     template =
     """
     <key>CFBundleDisplayName</key>
-    <string>Telegram</string>
+    <string>Fastgram</string>
     """
 )
 
@@ -1568,11 +1571,11 @@ plist_fragment(
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleDisplayName</key>
-    <string>Telegram</string>
+    <string>Fastgram</string>
     <key>CFBundleIdentifier</key>
     <string>{telegram_bundle_id}</string>
     <key>CFBundleName</key>
-    <string>Telegram</string>
+    <string>Fastgram</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleSignature</key>
