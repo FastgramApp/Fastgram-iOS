@@ -1,4 +1,5 @@
 import Foundation
+import os
 import AVFoundation
 import UIKit
 import Display
@@ -102,9 +103,10 @@ final class CameraOutput: NSObject {
     let ciContext: CIContext
     let colorSpace: CGColorSpace
     let isVideoMessage: Bool
-    
+    let isAdditionalOutput: Bool
+
     var hasAudio: Bool = false
-    
+
     let photoOutput = AVCapturePhotoOutput()
     let videoOutput = AVCaptureVideoDataOutput()
     let audioOutput = AVCaptureAudioDataOutput()
@@ -115,29 +117,34 @@ final class CameraOutput: NSObject {
     private var previewConnection: AVCaptureConnection?
 
     private var roundVideoFilter: CameraRoundLegacyVideoFilter?
+    private var roundVideoMetalCompositor: RoundVideoMetalCompositor?
     private let semaphore = DispatchSemaphore(value: 1)
     private var roundVideoFormatDescriptionCache: [RoundVideoFormatDescriptionCacheEntry] = []
-    
-    private let videoQueue = DispatchQueue(label: "", qos: .userInitiated)
+
+    // Both camera outputs share this queue because they mutate one recording state.
+    private let videoQueue: DispatchQueue
     private let audioQueue = DispatchQueue(label: "")
-    
+
     private let metadataQueue = DispatchQueue(label: "")
-    
+
     private var photoCaptureRequests = Atomic<[Int64: PhotoCaptureContext]>(value: [:])
     private var videoRecorder: VideoRecorder?
-    
+    private var benchmarkRunSignpostID: OSSignpostID?
+
     private var captureOrientation: AVCaptureVideoOrientation = .portrait
-        
+
     var processSampleBuffer: ((CMSampleBuffer, CVImageBuffer, AVCaptureConnection) -> Void)?
     var processAudioBuffer: ((CMSampleBuffer) -> Void)?
     var processCodes: (([CameraCode]) -> Void)?
-        
-    init(exclusive: Bool, ciContext: CIContext, colorSpace: CGColorSpace, use32BGRA: Bool = false) {
+
+    init(exclusive: Bool, ciContext: CIContext, colorSpace: CGColorSpace, use32BGRA: Bool = false, additional: Bool = false, sharedVideoQueue: DispatchQueue? = nil) {
         self.exclusive = exclusive
         self.ciContext = ciContext
         self.colorSpace = colorSpace
         self.isVideoMessage = use32BGRA
-        
+        self.isAdditionalOutput = additional
+        self.videoQueue = sharedVideoQueue ?? DispatchQueue(label: "", qos: .userInitiated)
+
         super.init()
         
         if #available(iOS 13.0, *) {
@@ -145,7 +152,40 @@ final class CameraOutput: NSObject {
         }
         
         self.videoOutput.alwaysDiscardsLateVideoFrames = false
+        // The session switches this to NV12 only after the Metal pipeline is ready.
         self.videoOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey: use32BGRA ? kCVPixelFormatType_32BGRA : kCVPixelFormatType_420YpCbCr8BiPlanarFullRange] as [String : Any]
+    }
+
+    private(set) var useMetalRoundVideoPipeline = false
+    private var didConfigureRoundVideoPipeline = false
+    private var lastColorVerifiedIsFront: Bool?
+    // Double optional distinguishes "no frame yet" from an untagged source.
+    private var roundVideoCanonicalColorMatrix: String??
+
+    // This choice is sticky because a writer track cannot change format mid-recording.
+    // Only the master output owns the compositor.
+    func configureRoundVideoPipeline(v2: Bool) -> Bool {
+        guard self.isVideoMessage else {
+            return false
+        }
+        if self.didConfigureRoundVideoPipeline {
+            return self.useMetalRoundVideoPipeline
+        }
+        self.didConfigureRoundVideoPipeline = true
+
+        var effectiveV2 = v2
+        if effectiveV2 && !self.isAdditionalOutput {
+            self.roundVideoMetalCompositor = RoundVideoMetalCompositor()
+            if self.roundVideoMetalCompositor == nil {
+                effectiveV2 = false
+            }
+        }
+        self.useMetalRoundVideoPipeline = effectiveV2
+
+        let pixelFormat: OSType = effectiveV2 ? kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange : kCVPixelFormatType_32BGRA
+        self.videoOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey: pixelFormat] as [String: Any]
+
+        return effectiveV2
     }
     
     deinit {
@@ -351,9 +391,9 @@ final class CameraOutput: NSObject {
     }
     
     private var currentMode: RecorderMode = .default
-    private var recordingCompletionPipe = ValuePipe<VideoCaptureResult>()
+    private var recordingCompletionPromise: Promise<VideoCaptureResult>?
     func startRecording(mode: RecorderMode, position: Camera.Position? = nil, orientation: AVCaptureVideoOrientation, additionalOutput: CameraOutput? = nil) -> Signal<CameraRecordingData, CameraRecordingError> {
-        guard self.videoRecorder == nil else {
+        guard self.videoRecorder == nil, self.recordingCompletionPromise == nil else {
             return .complete()
         }
         
@@ -404,8 +444,13 @@ final class CameraOutput: NSObject {
         let outputFilePath = NSTemporaryDirectory() + outputFileName + ".mp4"
         let outputFileURL = URL(fileURLWithPath: outputFilePath)
         
+        var optimizeRoundVideo = false
+        if case .roundVideo = mode {
+            optimizeRoundVideo = Camera.roundVideoOptimizationsEnabled
+        }
+        let recordingCompletionPromise = Promise<VideoCaptureResult>()
         let videoRecorder = VideoRecorder(
-            configuration: VideoRecorder.Configuration(videoSettings: videoSettings, audioSettings: audioSettings),
+            configuration: VideoRecorder.Configuration(videoSettings: videoSettings, audioSettings: audioSettings, optimizeRoundVideo: optimizeRoundVideo),
             ciContext: self.ciContext,
             orientation: orientation,
             fileUrl: outputFileURL,
@@ -413,28 +458,49 @@ final class CameraOutput: NSObject {
                 guard let self else {
                     return
                 }
+                if let signpostID = self.benchmarkRunSignpostID {
+                    os_signpost(.end, log: RoundVideoSignpost.log, name: "benchmarkRun", signpostID: signpostID)
+                    self.benchmarkRunSignpostID = nil
+                }
+                let captureResult: VideoCaptureResult
                 if case let .success(transitionImage, duration, positionChangeTimestamps) = result {
-                    self.recordingCompletionPipe.putNext(
-                        .finished(
-                            main: VideoCaptureResult.Result(
-                                path: outputFilePath,
-                                thumbnail: transitionImage ?? UIImage(),
-                                isMirrored: false,
-                                dimensions: dimensions
-                            ),
-                            additional: nil,
-                            duration: duration,
-                            positionChangeTimestamps: positionChangeTimestamps.map { ($0 == .front, $1) },
-                            captureTimestamp: CACurrentMediaTime()
-                        )
+                    captureResult = .finished(
+                        main: VideoCaptureResult.Result(
+                            path: outputFilePath,
+                            thumbnail: transitionImage ?? UIImage(),
+                            isMirrored: false,
+                            dimensions: dimensions
+                        ),
+                        additional: nil,
+                        duration: duration,
+                        positionChangeTimestamps: positionChangeTimestamps.map { ($0 == .front, $1) },
+                        captureTimestamp: CACurrentMediaTime()
                     )
                 } else {
-                    self.recordingCompletionPipe.putNext(.failed)
+                    captureResult = .failed
                 }
+                recordingCompletionPromise.set(.single(captureResult))
             }
         )
         guard let videoRecorder else {
             return .fail(.videoRecorderInitializationError)
+        }
+        self.recordingCompletionPromise = recordingCompletionPromise
+
+        if case .roundVideo = mode {
+            let signpostID = OSSignpostID(log: RoundVideoSignpost.log)
+            self.benchmarkRunSignpostID = signpostID
+            os_signpost(
+                .begin,
+                log: RoundVideoSignpost.log,
+                name: "benchmarkRun",
+                signpostID: signpostID,
+                "mode=%{public}@ effectiveNV12=%d dropLateFrames=%d",
+                Camera.roundVideoBenchmarkMode.name as NSString,
+                self.useMetalRoundVideoPipeline ? 1 : 0,
+                self.videoOutput.alwaysDiscardsLateVideoFrames ? 1 : 0
+            )
+            os_signpost(.event, log: RoundVideoSignpost.log, name: "recordingStartRequested")
         }
         
         videoRecorder.start()
@@ -460,15 +526,21 @@ final class CameraOutput: NSObject {
     }
     
     func stopRecording() -> Signal<VideoCaptureResult, NoError> {
-        guard let videoRecorder = self.videoRecorder, videoRecorder.isRecording else {
+        guard let recordingCompletionPromise = self.recordingCompletionPromise else {
             return .complete()
         }
-        videoRecorder.stop()
+        if let videoRecorder = self.videoRecorder, videoRecorder.isRecording {
+            videoRecorder.stop()
+        }
         
-        return self.recordingCompletionPipe.signal()
+        return recordingCompletionPromise.get()
         |> take(1)
-        |> afterDisposed {
+        |> afterDisposed { [weak self] in
+            guard let self, self.recordingCompletionPromise === recordingCompletionPromise else {
+                return
+            }
             self.videoRecorder = nil
+            self.recordingCompletionPromise = nil
         }
     }
     
@@ -477,8 +549,9 @@ final class CameraOutput: NSObject {
     }
     
     private weak var masterOutput: CameraOutput?
-    
+
     private var lastSampleTimestamp: CMTime?
+    private var emittedFirstFrameSignpost = false
     
     private func roundVideoFormatDescription(for sourceFormatDescription: CMFormatDescription) -> CMFormatDescription? {
         if let entry = self.roundVideoFormatDescriptionCache.first(where: { CFEqual($0.sourceFormatDescription, sourceFormatDescription) }) {
@@ -519,10 +592,22 @@ final class CameraOutput: NSObject {
 
     private var needsCrossfadeTransition = false
     private var crossfadeTransitionStart: Double = 0.0
-    
-    private var needsSwitchSampleOffset = false
-    private var lastAudioSampleTime: CMTime?
-    private var videoSwitchSampleTimeOffset: CMTime?
+
+    // Audio and video use different callback queues, so switch timing is lock-protected.
+    private struct SwitchTimingState {
+        var needsSwitchSampleOffset = false
+        var lastAudioSampleTime: CMTime?
+        var videoSwitchSampleTimeOffset: CMTime?
+    }
+    private let switchTimingLock = NSLock()
+    private var switchTimingState = SwitchTimingState()
+    private func withSwitchTiming<T>(_ f: (inout SwitchTimingState) -> T) -> T {
+        self.switchTimingLock.lock()
+        defer {
+            self.switchTimingLock.unlock()
+        }
+        return f(&self.switchTimingState)
+    }
     
     func processVideoRecording(_ sampleBuffer: CMSampleBuffer, fromAdditionalOutput: Bool) {
         guard let videoRecorder = self.videoRecorder, videoRecorder.isRecording else {
@@ -550,13 +635,28 @@ final class CameraOutput: NSObject {
                     }
                 }
                 
-                if (transitionFactor == 1.0 && fromAdditionalOutput)
+                var shouldProcess = (transitionFactor == 1.0 && fromAdditionalOutput)
                     || (transitionFactor == 0.0 && !fromAdditionalOutput)
-                    || (transitionFactor > 0.0 && transitionFactor < 1.0) {
-                    if let processedSampleBuffer = self.processRoundVideoSampleBuffer(sampleBuffer, additional: fromAdditionalOutput, transitionFactor: transitionFactor) {
+                    || (transitionFactor > 0.0 && transitionFactor < 1.0)
+                var effectiveTransitionFactor = transitionFactor
+                if self.useMetalRoundVideoPipeline {
+                    // Metal hard-cuts at the midpoint to avoid interleaving both cameras.
+                    let useAdditional = transitionFactor >= 0.5
+                    shouldProcess = fromAdditionalOutput == useAdditional
+                    effectiveTransitionFactor = useAdditional ? 1.0 : 0.0
+                }
+                if shouldProcess {
+                    if let processedSampleBuffer = self.processRoundVideoSampleBuffer(sampleBuffer, additional: fromAdditionalOutput, transitionFactor: effectiveTransitionFactor) {
                         let presentationTime = CMSampleBufferGetPresentationTimeStamp(processedSampleBuffer)
-                        if let lastSampleTimestamp = self.lastSampleTimestamp, lastSampleTimestamp > presentationTime {
-                            
+                        // Reject equal timestamps while both streams overlap during a crossfade.
+                        let shouldSkipTimestamp: Bool
+                        if let lastSampleTimestamp = self.lastSampleTimestamp {
+                            shouldSkipTimestamp = Camera.roundVideoOptimizationsEnabled ? lastSampleTimestamp >= presentationTime : lastSampleTimestamp > presentationTime
+                        } else {
+                            shouldSkipTimestamp = false
+                        }
+                        if shouldSkipTimestamp {
+
                         } else {
                             videoRecorder.appendSampleBuffer(processedSampleBuffer)
                             self.lastSampleTimestamp = presentationTime
@@ -570,7 +670,9 @@ final class CameraOutput: NSObject {
                     if self.needsCrossfadeTransition {
                         self.needsCrossfadeTransition = false
                         self.crossfadeTransitionStart = currentTimestamp + 0.03
-                        self.needsSwitchSampleOffset = true
+                        self.withSwitchTiming { state in
+                            state.needsSwitchSampleOffset = true
+                        }
                     }
                     if self.crossfadeTransitionStart > 0.0, currentTimestamp - self.crossfadeTransitionStart < duration {
                         if case .front = self.currentPosition {
@@ -586,28 +688,32 @@ final class CameraOutput: NSObject {
                 }
                 if let processedSampleBuffer = self.processRoundVideoSampleBuffer(sampleBuffer, additional: additional, transitionFactor: transitionFactor) {
                     videoRecorder.appendSampleBuffer(processedSampleBuffer)
-                } else {
+                } else if !self.useMetalRoundVideoPipeline {
+                    // A raw full-resolution frame would establish the wrong Metal track format.
+                    // Drop it instead; legacy keeps its existing fallback.
                     videoRecorder.appendSampleBuffer(sampleBuffer)
                 }
             }
         } else {
             if type == kCMMediaType_Audio {
-                if self.needsSwitchSampleOffset {
-                    self.needsSwitchSampleOffset = false
-                    
-                    if let lastAudioSampleTime = self.lastAudioSampleTime {
-                        let videoSampleTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-                        let offset = videoSampleTime - lastAudioSampleTime
-                        if let current = self.videoSwitchSampleTimeOffset {
-                            self.videoSwitchSampleTimeOffset = current + offset
-                        } else {
-                            self.videoSwitchSampleTimeOffset = offset
+                self.withSwitchTiming { state in
+                    if state.needsSwitchSampleOffset {
+                        state.needsSwitchSampleOffset = false
+
+                        if let lastAudioSampleTime = state.lastAudioSampleTime {
+                            let videoSampleTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+                            let offset = videoSampleTime - lastAudioSampleTime
+                            if let current = state.videoSwitchSampleTimeOffset {
+                                state.videoSwitchSampleTimeOffset = current + offset
+                            } else {
+                                state.videoSwitchSampleTimeOffset = offset
+                            }
+                            state.lastAudioSampleTime = nil
                         }
-                        self.lastAudioSampleTime = nil
                     }
+
+                    state.lastAudioSampleTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer) + CMSampleBufferGetDuration(sampleBuffer)
                 }
-                
-                self.lastAudioSampleTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer) + CMSampleBufferGetDuration(sampleBuffer)
             }
             videoRecorder.appendSampleBuffer(sampleBuffer)
         }
@@ -620,6 +726,58 @@ final class CameraOutput: NSObject {
         self.semaphore.wait()
         defer {
             self.semaphore.signal()
+        }
+
+        // Metal hard-cuts, so transitionFactor applies only to legacy.
+        if self.useMetalRoundVideoPipeline {
+            guard let compositor = self.roundVideoMetalCompositor else {
+                return nil
+            }
+            // One writer track requires stable color metadata across both cameras.
+            // Terminate rather than silently mislabel samples.
+            if self.lastColorVerifiedIsFront != additional {
+                let matrix = CVBufferGetAttachment(videoPixelBuffer, kCVImageBufferYCbCrMatrixKey, nil)?.takeUnretainedValue() as? String
+                if let canonicalMatrix = self.roundVideoCanonicalColorMatrix {
+                    if matrix != canonicalMatrix {
+                        os_signpost(.event, log: RoundVideoSignpost.log, name: "v2ColorRuntimeMismatch")
+                        Logger.shared.log("Camera", "Round video V2: source YCbCr matrix \(matrix ?? "nil") disagrees with the recording's canonical \(canonicalMatrix ?? "nil"), terminating recording")
+                        self.videoRecorder?.fail()
+                        return nil
+                    }
+                } else {
+                    self.roundVideoCanonicalColorMatrix = matrix
+                }
+                self.lastColorVerifiedIsFront = additional
+            }
+            let renderSignpostID = OSSignpostID(log: RoundVideoSignpost.log)
+            os_signpost(.begin, log: RoundVideoSignpost.log, name: "filterRender", signpostID: renderSignpostID)
+            let renderedPixelBuffer = compositor.render(pixelBuffer: videoPixelBuffer, isFront: additional)
+            os_signpost(.end, log: RoundVideoSignpost.log, name: "filterRender", signpostID: renderSignpostID)
+            // The compositor creates this from the first tagged output buffer.
+            guard let metalPixelBuffer = renderedPixelBuffer, let metalFormatDescription = compositor.outputFormatDescription else {
+                return nil
+            }
+            var metalTimingInfo: CMSampleTimingInfo = .invalid
+            CMSampleBufferGetSampleTimingInfo(sampleBuffer, at: 0, timingInfoOut: &metalTimingInfo)
+            if let videoSwitchSampleTimeOffset = self.withSwitchTiming({ $0.videoSwitchSampleTimeOffset }) {
+                metalTimingInfo.decodeTimeStamp = metalTimingInfo.decodeTimeStamp - videoSwitchSampleTimeOffset
+                metalTimingInfo.presentationTimeStamp = metalTimingInfo.presentationTimeStamp - videoSwitchSampleTimeOffset
+            }
+            var metalSampleBuffer: CMSampleBuffer?
+            let metalStatus = CMSampleBufferCreateForImageBuffer(
+                allocator: kCFAllocatorDefault,
+                imageBuffer: metalPixelBuffer,
+                dataReady: true,
+                makeDataReadyCallback: nil,
+                refcon: nil,
+                formatDescription: metalFormatDescription,
+                sampleTiming: &metalTimingInfo,
+                sampleBufferOut: &metalSampleBuffer
+            )
+            if metalStatus == noErr, let metalSampleBuffer {
+                return metalSampleBuffer
+            }
+            return nil
         }
 
         guard let newFormatDescription = self.roundVideoFormatDescription(for: formatDescription) else {
@@ -637,14 +795,18 @@ final class CameraOutput: NSObject {
             filter.prepare(with: newFormatDescription, outputRetainedBufferCountHint: 4)
         }
 
-        guard let newPixelBuffer = filter.render(pixelBuffer: videoPixelBuffer, additional: additional, captureOrientation: self.captureOrientation, transitionFactor: transitionFactor) else {
+        let renderSignpostID = OSSignpostID(log: RoundVideoSignpost.log)
+        os_signpost(.begin, log: RoundVideoSignpost.log, name: "filterRender", signpostID: renderSignpostID)
+        let renderedPixelBuffer = filter.render(pixelBuffer: videoPixelBuffer, additional: additional, captureOrientation: self.captureOrientation, transitionFactor: transitionFactor)
+        os_signpost(.end, log: RoundVideoSignpost.log, name: "filterRender", signpostID: renderSignpostID)
+        guard let newPixelBuffer = renderedPixelBuffer else {
             return nil
         }
         
         var sampleTimingInfo: CMSampleTimingInfo = .invalid
         CMSampleBufferGetSampleTimingInfo(sampleBuffer, at: 0, timingInfoOut: &sampleTimingInfo)
-        
-        if let videoSwitchSampleTimeOffset = self.videoSwitchSampleTimeOffset {
+
+        if let videoSwitchSampleTimeOffset = self.withSwitchTiming({ $0.videoSwitchSampleTimeOffset }) {
             sampleTimingInfo.decodeTimeStamp = sampleTimingInfo.decodeTimeStamp - videoSwitchSampleTimeOffset
             sampleTimingInfo.presentationTimeStamp = sampleTimingInfo.presentationTimeStamp - videoSwitchSampleTimeOffset
         }
@@ -669,11 +831,33 @@ final class CameraOutput: NSObject {
     
     private var currentPosition: Camera.Position = .front
     private var lastSwitchTimestamp: Double = 0.0
-   
+
     func markPositionChange(position: Camera.Position) {
-        self.currentPosition = position
-        self.lastSwitchTimestamp = CACurrentMediaTime()
-        
+        // Capture the timestamp before dispatch so queue latency does not shift the transition.
+        let timestamp = CACurrentMediaTime()
+        if case .roundVideo = self.currentMode {
+            let positionName = position == .front ? "front" : "back"
+            os_signpost(
+                .event,
+                log: RoundVideoSignpost.log,
+                name: "cameraSwitch",
+                "position=%{public}@",
+                positionName as NSString
+            )
+        }
+        if Camera.roundVideoOptimizationsEnabled {
+            self.videoQueue.async { [weak self] in
+                guard let self else {
+                    return
+                }
+                self.currentPosition = position
+                self.lastSwitchTimestamp = timestamp
+            }
+        } else {
+            self.currentPosition = position
+            self.lastSwitchTimestamp = timestamp
+        }
+
         if let videoRecorder = self.videoRecorder {
             videoRecorder.markPositionChange(position: position)
         }
@@ -693,13 +877,24 @@ extension CameraOutput: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureA
         }
         
         if let videoPixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
+            if self.isVideoMessage && !self.emittedFirstFrameSignpost {
+                self.emittedFirstFrameSignpost = true
+                if self.isAdditionalOutput {
+                    os_signpost(.event, log: RoundVideoSignpost.log, name: "firstCaptureFrameAdditional")
+                } else {
+                    os_signpost(.event, log: RoundVideoSignpost.log, name: "firstCaptureFrameMain")
+                }
+            }
             self.processSampleBuffer?(sampleBuffer, videoPixelBuffer, connection)
         } else if sampleBuffer.type == kCMMediaType_Audio {
             self.processAudioBuffer?(sampleBuffer)
         }
     }
-    
+
     func captureOutput(_ output: AVCaptureOutput, didDrop sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        if self.isVideoMessage {
+            os_signpost(.event, log: RoundVideoSignpost.log, name: "dropVideoFrame")
+        }
         if #available(iOS 13.0, *) {
             Logger.shared.log("Camera", "Dropped sample buffer \(sampleBuffer.attachments)")
         }

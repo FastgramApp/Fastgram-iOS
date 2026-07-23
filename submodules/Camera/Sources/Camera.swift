@@ -1,4 +1,5 @@
 import Foundation
+import os
 import UIKit
 import SwiftSignalKit
 import AVFoundation
@@ -52,23 +53,30 @@ final class CameraDeviceContext {
     let input = CameraInput()
     let output: CameraOutput
         
-    init(session: CameraSession, exclusive: Bool, additional: Bool, ciContext: CIContext, colorSpace: CGColorSpace, isRoundVideo: Bool = false) {
+    init(session: CameraSession, exclusive: Bool, additional: Bool, ciContext: CIContext, colorSpace: CGColorSpace, isRoundVideo: Bool = false, sharedVideoQueue: DispatchQueue? = nil) {
         self.session = session
         self.exclusive = exclusive
         self.additional = additional
         self.isRoundVideo = isRoundVideo
-        self.output = CameraOutput(exclusive: exclusive, ciContext: ciContext, colorSpace: colorSpace, use32BGRA: isRoundVideo)
+        self.output = CameraOutput(exclusive: exclusive, ciContext: ciContext, colorSpace: colorSpace, use32BGRA: isRoundVideo, additional: additional, sharedVideoQueue: sharedVideoQueue)
     }
-    
+
     func configure(position: Camera.Position, previewView: CameraSimplePreviewView?, audio: Bool, photo: Bool, metadata: Bool, preferWide: Bool = false, preferLowerFramerate: Bool = false, switchAudio: Bool = true) {
         guard let session = self.session else {
             return
         }
-        
+
         self.previewView = previewView
-                
+
         self.device.configure(for: session, position: position, dual: !self.exclusive || self.additional, switchAudio: switchAudio)
-        self.device.configureDeviceFormat(maxDimensions: self.maxDimensions(additional: self.additional, preferWide: preferWide), maxFramerate: self.preferredMaxFrameRate(useLower: preferLowerFramerate))
+        var fallbackDimensions: CMVideoDimensions?
+        var useRoundVideoFormatSelector = false
+        if self.isRoundVideo && !self.exclusive, case .r640x480 = Camera.roundVideoDualCaptureQuality {
+            fallbackDimensions = self.defaultMaxDimensions(additional: self.additional, preferWide: preferWide)
+            useRoundVideoFormatSelector = Camera.roundVideoOptimizationsEnabled
+        }
+        self.device.configureDeviceFormat(maxDimensions: self.maxDimensions(additional: self.additional, preferWide: preferWide), maxFramerate: self.preferredMaxFrameRate(useLower: preferLowerFramerate), requireMultiCamSupported: session.hasMultiCam, preferBinned: useRoundVideoFormatSelector, fallbackDimensions: fallbackDimensions)
+        self.logCaptureFormat()
         self.input.configure(for: session, device: self.device, audio: audio && switchAudio)
         self.output.configure(for: session, device: self.device, input: self.input, previewView: previewView, audio: audio && switchAudio, photo: photo, metadata: metadata)
         
@@ -85,16 +93,47 @@ final class CameraDeviceContext {
         self.input.invalidate(for: session, switchAudio: switchAudio)
     }
     
+    private func defaultMaxDimensions(additional: Bool, preferWide: Bool) -> CMVideoDimensions {
+        if additional || preferWide {
+            return CMVideoDimensions(width: 1920, height: 1440)
+        } else {
+            return CMVideoDimensions(width: 1920, height: 1080)
+        }
+    }
+
     private func maxDimensions(additional: Bool, preferWide: Bool) -> CMVideoDimensions {
         if self.isRoundVideo && self.exclusive {
             return CMVideoDimensions(width: 640, height: 480)
         } else {
-            if additional || preferWide {
-                return CMVideoDimensions(width: 1920, height: 1440)
-            } else {
-                return CMVideoDimensions(width: 1920, height: 1080)
+            if self.isRoundVideo {
+                switch Camera.roundVideoDualCaptureQuality {
+                case .current:
+                    break
+                case .r640x480:
+                    return CMVideoDimensions(width: 640, height: 480)
+                }
             }
+            return self.defaultMaxDimensions(additional: additional, preferWide: preferWide)
         }
+    }
+
+    private func logCaptureFormat() {
+        guard self.isRoundVideo, let format = self.device.videoDevice?.activeFormat else {
+            return
+        }
+        let dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+        let eventName: StaticString = self.additional ? "captureFormatAdditional" : "captureFormatMain"
+        os_signpost(
+            .event,
+            log: RoundVideoSignpost.log,
+            name: eventName,
+            "mode=%{public}@ width=%d height=%d fov=%.2f binned=%d",
+            Camera.roundVideoBenchmarkMode.name as NSString,
+            dimensions.width,
+            dimensions.height,
+            Double(format.videoFieldOfView),
+            format.isVideoBinned ? 1 : 0
+        )
     }
     
     private func preferredMaxFrameRate(useLower: Bool) -> Double {
@@ -140,13 +179,24 @@ private final class CameraContext {
     private func savePreviewSnapshot(pixelBuffer: CVPixelBuffer, front: Bool) {
         Queue.concurrentDefaultQueue().async {
             var ciImage = CIImage(cvImageBuffer: pixelBuffer)
+            // Blur a small proxy in optimized modes to avoid full-resolution placeholder work.
+            if Camera.roundVideoOptimizationsEnabled {
+                let downscale: CGFloat = 0.125
+                ciImage = ciImage.transformed(by: CGAffineTransformMakeScale(downscale, downscale))
+            }
             let size = ciImage.extent.size
             if front {
                 var transform = CGAffineTransformMakeScale(1.0, -1.0)
                 transform = CGAffineTransformTranslate(transform, 0.0, -size.height)
                 ciImage = ciImage.transformed(by: transform)
             }
-            ciImage = ciImage.clampedToExtent().applyingGaussianBlur(sigma: Camera.isDualCameraSupported(forRoundVideo: true) ? 60.0 : 40.0).cropped(to: CGRect(origin: .zero, size: size))
+            let blurSigma: Double
+            if Camera.roundVideoOptimizationsEnabled {
+                blurSigma = Camera.isDualCameraSupported(forRoundVideo: true) ? 7.5 : 5.0
+            } else {
+                blurSigma = Camera.isDualCameraSupported(forRoundVideo: true) ? 60.0 : 40.0
+            }
+            ciImage = ciImage.clampedToExtent().applyingGaussianBlur(sigma: blurSigma).cropped(to: CGRect(origin: .zero, size: size))
             if let cgImage = self.ciContext.createCGImage(ciImage, from: ciImage.extent) {
                 let uiImage = UIImage(cgImage: cgImage, scale: 1.0, orientation: .right)
                 if front {
@@ -198,8 +248,19 @@ private final class CameraContext {
             return
         }
         Logger.shared.log("CameraContext", "startCapture")
+        if self.initialConfiguration.isRoundVideo {
+            os_signpost(.event, log: RoundVideoSignpost.log, name: "captureSessionStart")
+        }
         self.session.session.startRunning()
         self.isSessionRunning = self.session.session.isRunning
+        self.logMultiCamCosts()
+    }
+
+    private func logMultiCamCosts() {
+        if #available(iOS 13.0, *), let multiSession = self.session.session as? AVCaptureMultiCamSession {
+            Logger.shared.log("Camera", "MultiCam hardwareCost: \(multiSession.hardwareCost), systemPressureCost: \(multiSession.systemPressureCost)")
+            os_signpost(.event, log: RoundVideoSignpost.log, name: "multiCamCost", "hardwareCost=%.3f systemPressureCost=%.3f", multiSession.hardwareCost, multiSession.systemPressureCost)
+        }
     }
     
     func stopCapture(invalidate: Bool = false) {
@@ -331,11 +392,18 @@ private final class CameraContext {
         if enabled {
             self.configure {
                 self.mainDeviceContext?.invalidate()
-                self.mainDeviceContext = CameraDeviceContext(session: self.session, exclusive: false, additional: false, ciContext: self.ciContext, colorSpace: self.colorSpace, isRoundVideo: self.initialConfiguration.isRoundVideo)
+                // Serialize both cameras because they feed one compositor and writer.
+                var sharedVideoQueue: DispatchQueue?
+                if self.initialConfiguration.isRoundVideo && Camera.roundVideoOptimizationsEnabled {
+                    sharedVideoQueue = DispatchQueue(label: "roundVideoCapture", qos: .userInitiated)
+                }
+                self.mainDeviceContext = CameraDeviceContext(session: self.session, exclusive: false, additional: false, ciContext: self.ciContext, colorSpace: self.colorSpace, isRoundVideo: self.initialConfiguration.isRoundVideo, sharedVideoQueue: sharedVideoQueue)
                 self.mainDeviceContext?.configure(position: .back, previewView: self.simplePreviewView, audio: self.initialConfiguration.audio, photo: self.initialConfiguration.photo, metadata: self.initialConfiguration.metadata)
-            
-                self.additionalDeviceContext = CameraDeviceContext(session: self.session, exclusive: false, additional: true, ciContext: self.ciContext, colorSpace: self.colorSpace, isRoundVideo: self.initialConfiguration.isRoundVideo)
+
+                self.additionalDeviceContext = CameraDeviceContext(session: self.session, exclusive: false, additional: true, ciContext: self.ciContext, colorSpace: self.colorSpace, isRoundVideo: self.initialConfiguration.isRoundVideo, sharedVideoQueue: sharedVideoQueue)
                 self.additionalDeviceContext?.configure(position: .front, previewView: self.secondaryPreviewView, audio: false, photo: true, metadata: false)
+
+                self.configureRoundVideoPipeline()
             }
             self.mainDeviceContext?.output.processSampleBuffer = { [weak self] sampleBuffer, pixelBuffer, connection in
                 guard let self, let mainDeviceContext = self.mainDeviceContext else {
@@ -384,6 +452,8 @@ private final class CameraContext {
                 
                 self.mainDeviceContext = CameraDeviceContext(session: self.session, exclusive: true, additional: false, ciContext: self.ciContext, colorSpace: self.colorSpace, isRoundVideo: self.initialConfiguration.isRoundVideo)
                 self.mainDeviceContext?.configure(position: self.positionValue, previewView: self.simplePreviewView, audio: self.initialConfiguration.audio, photo: self.initialConfiguration.photo, metadata: self.initialConfiguration.metadata, preferWide: preferWide, preferLowerFramerate: preferLowerFramerate)
+
+                self.configureRoundVideoPipeline()
             }
             self.mainDeviceContext?.output.processSampleBuffer = { [weak self] sampleBuffer, pixelBuffer, connection in
                 guard let self, let mainDeviceContext = self.mainDeviceContext else {
@@ -450,7 +520,8 @@ private final class CameraContext {
             }
         }
         self.session.session.startRunning()
-        
+        self.logMultiCamCosts()
+
         if change {
             if #available(iOS 13.0, *), let previewView = self.simplePreviewView {
                 if enabled, let secondaryPreviewView = self.secondaryPreviewView {
@@ -484,6 +555,42 @@ private final class CameraContext {
         self.session.session.beginConfiguration()
         f()
         self.session.session.commitConfiguration()
+    }
+
+    // Both cameras must use one pixel format and YCbCr matrix because they share a writer
+    // track. Disable Metal when their format metadata disagrees.
+    private func configureRoundVideoPipeline() {
+        guard self.initialConfiguration.isRoundVideo, let mainDeviceContext = self.mainDeviceContext else {
+            return
+        }
+        var wantV2 = Camera.roundVideoPipelineV2 && RoundVideoMetalCompositor.sharedPipeline != nil
+        if wantV2 {
+            let mainMatrix = self.formatColorMatrix(mainDeviceContext.device.videoDevice?.activeFormat)
+            let additionalMatrix = self.formatColorMatrix(self.additionalDeviceContext?.device.videoDevice?.activeFormat)
+            if let mainMatrix, let additionalMatrix, mainMatrix != additionalMatrix {
+                wantV2 = false
+                Logger.shared.log("Camera", "Round video V2 disabled: cameras disagree on YCbCr matrix (\(mainMatrix) vs \(additionalMatrix))")
+                os_signpost(.event, log: RoundVideoSignpost.log, name: "v2ColorFallback")
+            }
+        }
+        let effectiveV2 = mainDeviceContext.output.configureRoundVideoPipeline(v2: wantV2)
+        let _ = self.additionalDeviceContext?.output.configureRoundVideoPipeline(v2: effectiveV2)
+        os_signpost(
+            .event,
+            log: RoundVideoSignpost.log,
+            name: "pipelineConfigured",
+            "mode=%{public}@ requestedNV12=%d effectiveNV12=%d",
+            Camera.roundVideoBenchmarkMode.name as NSString,
+            Camera.roundVideoPipelineV2 ? 1 : 0,
+            effectiveV2 ? 1 : 0
+        )
+    }
+
+    private func formatColorMatrix(_ format: AVCaptureDevice.Format?) -> String? {
+        guard let format, let extensions = CMFormatDescriptionGetExtensions(format.formatDescription) as? [String: Any] else {
+            return nil
+        }
+        return extensions[kCVImageBufferYCbCrMatrixKey as String] as? String
     }
     
     var hasTorch: Signal<Bool, NoError> {
@@ -718,7 +825,49 @@ public final class Camera {
     public typealias FocusMode = AVCaptureDevice.FocusMode
     public typealias ExposureMode = AVCaptureDevice.ExposureMode
     public typealias FlashMode = AVCaptureDevice.FlashMode
-    
+
+    // MARK: Round-video benchmark
+    public enum RoundVideoBenchmarkMode: Int32 {
+        case vanilla = 0
+        case optimizedCurrentResolution = 1
+        case optimized640x480 = 2
+
+        public var name: String {
+            switch self {
+            case .vanilla:
+                return "vanilla"
+            case .optimizedCurrentResolution:
+                return "optimized-current"
+            case .optimized640x480:
+                return "optimized-640x480"
+            }
+        }
+    }
+    public static var roundVideoBenchmarkMode: RoundVideoBenchmarkMode = .vanilla
+
+    public static var roundVideoOptimizationsEnabled: Bool {
+        return self.roundVideoBenchmarkMode != .vanilla
+    }
+
+    // MARK: Round-video capture quality
+    public enum RoundVideoDualCaptureQuality {
+        case current
+        case r640x480
+    }
+    public static var roundVideoDualCaptureQuality: RoundVideoDualCaptureQuality {
+        switch self.roundVideoBenchmarkMode {
+        case .vanilla, .optimizedCurrentResolution:
+            return .current
+        case .optimized640x480:
+            return .r640x480
+        }
+    }
+
+    // Process NV12 directly in Metal instead of converting through BGRA and Core Image.
+    public static var roundVideoPipelineV2: Bool {
+        return self.roundVideoOptimizationsEnabled
+    }
+
     public struct CollageGrid: Hashable {
         public struct Row: Hashable {
             public let columns: Int

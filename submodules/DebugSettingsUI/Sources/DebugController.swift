@@ -53,6 +53,7 @@ private enum DebugControllerSection: Int32 {
     case videoExperiments
     case videoExperiments2
     case info
+    case roundVideoExperiments
 }
 
 private enum DebugControllerEntry: ItemListNodeEntry {
@@ -114,6 +115,7 @@ private enum DebugControllerEntry: ItemListNodeEntry {
     case pwa(Bool)
     case enableLocalTranslation(Bool)
     case preferredVideoCodec(Int, String, String?, Bool)
+    case roundVideoBenchmarkMode(Int, String, Int32, Bool)
     case disableVideoAspectScaling(Bool)
     case enableNetworkFramework(Bool)
     case enableNetworkExperiments(Bool)
@@ -139,6 +141,8 @@ private enum DebugControllerEntry: ItemListNodeEntry {
             return DebugControllerSection.experiments.rawValue
         case .clearTips, .resetNotifications, .crash, .fillLocalSavedMessageCache, .resetDatabase, .resetDatabaseAndCache, .resetHoles, .resetTagHoles, .reindexUnread, .resetCacheIndex, .reindexCache, .resetBiometricsData, .optimizeDatabase, .photoPreview, .knockoutWallpaper, .compressedEmojiCache, .storiesJpegExperiment, .checkSerializedData, .enableQuickReactionSwitch, .experimentalCompatibility, .enableDebugDataDisplay, .fakeGlass, .forceClearGlass, .debugRipple, .debugRichText, .browserExperiment, .allForumsHaveTabs, .enableReactionOverrides, .restorePurchases, .disableReloginTokens, .liveStreamV2, .experimentalCallMute, .playerV2, .devRequests, .enableUpdates, .pwa, .enableLocalTranslation:
             return DebugControllerSection.experiments.rawValue
+        case .roundVideoBenchmarkMode:
+            return DebugControllerSection.roundVideoExperiments.rawValue
         case .logTranslationRecognition, .resetTranslationStates:
             return DebugControllerSection.translation.rawValue
         case .preferredVideoCodec:
@@ -284,9 +288,11 @@ private enum DebugControllerEntry: ItemListNodeEntry {
             return 103
         case .versionInfo:
             return 104
+        case let .roundVideoBenchmarkMode(index, _, _, _):
+            return 200 + index
         }
     }
-    
+
     static func <(lhs: DebugControllerEntry, rhs: DebugControllerEntry) -> Bool {
         return lhs.stableId < rhs.stableId
     }
@@ -1471,6 +1477,16 @@ private enum DebugControllerEntry: ItemListNodeEntry {
                     })
                 }).start()
             })
+        case let .roundVideoBenchmarkMode(_, title, value, isSelected):
+            return ItemListCheckboxItem(presentationData: presentationData, systemStyle: .glass, title: title, style: .right, checked: isSelected, zeroSeparatorInsets: false, sectionId: self.section, action: {
+                let _ = arguments.sharedContext.accountManager.transaction ({ transaction in
+                    transaction.updateSharedData(ApplicationSpecificSharedDataKeys.experimentalUISettings, { settings in
+                        var settings = settings?.get(ExperimentalUISettings.self) ?? ExperimentalUISettings.defaultSettings
+                        settings.roundVideoBenchmarkMode = value
+                        return EnginePreferencesEntry(settings)
+                    })
+                }).start()
+            })
         case let .disableVideoAspectScaling(value):
             return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, title: "Video Cropping Optimization", value: !value, sectionId: self.section, style: .blocks, updated: { value in
                 let _ = arguments.sharedContext.accountManager.transaction ({ transaction in
@@ -1650,7 +1666,17 @@ private func debugControllerEntries(context: AccountContext?, sharedContext: Sha
         entries.append(.hostInfo(presentationData.theme, "Host: \(backupHostOverride)"))
     }
     entries.append(.versionInfo(presentationData.theme))
-    
+
+    // Keep these last so ItemList stableIds remain monotonic.
+    let roundVideoBenchmarkOptions: [(Int, String, Int32)] = [
+        (0, "Round Video: Vanilla", 0),
+        (1, "Round Video: Optimized / Current Resolution", 1),
+        (2, "Round Video: Optimized / 640x480", 2)
+    ]
+    for (index, title, value) in roundVideoBenchmarkOptions {
+        entries.append(.roundVideoBenchmarkMode(index, title, value, experimentalSettings.roundVideoBenchmarkMode == value))
+    }
+
     return entries
 }
 
