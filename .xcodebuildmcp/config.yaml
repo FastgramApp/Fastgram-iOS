@@ -1,2 +1,2 @@
 schemaVersion: 1
-enabledWorkflows: ["simulator", "debugging", "ui-automation"]
+enabledWorkflows: ["simulator", "device", "debugging", "ui-automation", "logging", "xcode-ide"]
