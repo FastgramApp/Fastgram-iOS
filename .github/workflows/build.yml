@@ -1,9 +1,6 @@
-name: CI
+name: Fastgram build
 
 on:
-  push:
-    branches: [ master ]
-
   workflow_dispatch:
 
 jobs:
@@ -29,6 +26,12 @@ jobs:
           mv /Users/Shared/$(basename $GITHUB_WORKSPACE) /Users/Shared/telegram-ios
 
       - name: Build the App
+        env:
+          FASTGRAM_BUNDLE_ID: ${{ vars.FASTGRAM_BUNDLE_ID }}
+          FASTGRAM_TEAM_ID: ${{ vars.FASTGRAM_TEAM_ID }}
+          FASTGRAM_API_ID: ${{ secrets.FASTGRAM_API_ID }}
+          FASTGRAM_API_HASH: ${{ secrets.FASTGRAM_API_HASH }}
+          FASTGRAM_APPSTORE_ID: ${{ vars.FASTGRAM_APPSTORE_ID }}
         run: |
           set -x
 
@@ -39,6 +42,7 @@ jobs:
           BAZEL_USER_ROOT="/private/var/tmp/_bazel_containerhost"
 
           cd $SOURCE_DIR
+          python3 build-system/Make/GenerateFastgramConfiguration.py
 
           BUILD_NUMBER_OFFSET="$(cat build_number_offset)"
 
@@ -53,7 +57,7 @@ jobs:
           python3 -u build-system/Make/Make.py \
             --bazelUserRoot="$BAZEL_USER_ROOT" \
             build \
-            --configurationPath="build-system/appstore-configuration.json" \
+            --configurationPath="build-system/fastgram-local-configuration.json" \
             --codesigningInformationPath=build-system/fake-codesigning \
             --configuration=release_arm64 \
             --buildNumber="$BUILD_NUMBER"
@@ -80,9 +84,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: build-${{ env.BUILD_NUMBER }}
-          release_name: Telegram ${{ env.APP_VERSION }} (${{ env.BUILD_NUMBER }})
+          release_name: Fastgram ${{ env.APP_VERSION }} (${{ env.BUILD_NUMBER }})
           body: |
-            An unsigned build of Telegram for iOS ${{ env.APP_VERSION }} (${{ env.BUILD_NUMBER }})
+            An unsigned build of Fastgram for iOS ${{ env.APP_VERSION }} (${{ env.BUILD_NUMBER }})
           draft: false
           prerelease: false
 
@@ -94,7 +98,7 @@ jobs:
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: /Users/Shared/telegram-ios/build/artifacts/Telegram.ipa
-          asset_name: Telegram.ipa
+          asset_name: Fastgram.ipa
           asset_content_type: application/zip
 
       - name: Upload Release DSYM
@@ -105,5 +109,5 @@ jobs:
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: /Users/Shared/telegram-ios/build/artifacts/Telegram.DSYMs.zip
-          asset_name: Telegram.DSYMs.zip
+          asset_name: Fastgram.DSYMs.zip
           asset_content_type: application/zip

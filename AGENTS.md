@@ -12,14 +12,14 @@ The app is built using Bazel via the `Make.py` wrapper. There is no selective pe
 python3 build-system/Make/Make.py --overrideXcodeVersion \
  --cacheDir ~/telegram-bazel-cache \
  build \
- --configurationPath build-system/appstore-configuration.json \
- --gitCodesigningRepository git@gitlab.com:peter-iakovlev/fastlanematch.git \
+ --configurationPath build-system/fastgram-local-configuration.json \
+ --gitCodesigningRepository "$FASTGRAM_CODESIGNING_REPOSITORY" \
  --gitCodesigningType development --gitCodesigningUseCurrent --buildNumber=1 --configuration=debug_sim_arm64
 ```
 
 Add `--continueOnError` after `build` (forwards to bazel's `--keep_going`) when verifying changes that may surface errors in many files at once — it lets the full set of errors land in one pass instead of stopping at the first failing target.
 
-The build needs `TELEGRAM_CODESIGNING_GIT_PASSWORD` in the environment. It is set in `~/.zshrc` but Codex's bash tool does NOT source shell config by default. Prefix build commands with `source ~/.zshrc 2>/dev/null;` to pick it up.
+The build needs `TELEGRAM_CODESIGNING_GIT_PASSWORD` in the environment when the private signing repository is used.
 
 ## Code Style Guidelines
 - **Naming**: PascalCase for types, camelCase for variables/methods
