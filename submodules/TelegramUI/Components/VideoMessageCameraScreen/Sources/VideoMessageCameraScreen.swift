@@ -1,4 +1,5 @@
 import Foundation
+import os
 import UIKit
 import Display
 import AsyncDisplayKit
@@ -8,6 +9,7 @@ import ViewControllerComponent
 import ComponentDisplayAdapters
 import TelegramPresentationData
 import AccountContext
+import TelegramUIPreferences
 import TelegramCore
 import PresentationDataUtils
 import Camera
@@ -467,7 +469,11 @@ private final class VideoMessageCameraScreenComponent: CombinedComponent {
             
             self.resultDisposable.set((camera.stopRecording()
             |> deliverOnMainQueue).startStrict(next: { [weak self] result in
-                if let self, let controller = self.getController(), case let .finished(mainResult, _, duration, _, _) = result {
+                guard let self, let controller = self.getController() else {
+                    return
+                }
+                switch result {
+                case let .finished(mainResult, _, duration, _, _):
                     self.completion.invoke(
                         .video(VideoMessageCameraScreen.CaptureResult.Video(
                             videoPath: mainResult.path,
@@ -477,6 +483,9 @@ private final class VideoMessageCameraScreenComponent: CombinedComponent {
                         ))
                     )
                     controller.updateCameraState({ $0.updatedRecording(.none) }, transition: .spring(duration: 0.4))
+                case .failed:
+                    controller.updateCameraState({ $0.updatedRecording(.none) }, transition: .spring(duration: 0.4))
+                    controller.completion(nil, nil, nil, nil)
                 }
             }))
             
@@ -1068,7 +1077,17 @@ public class VideoMessageCameraScreen: ViewController {
             guard self.camera == nil else {
                 return
             }
-            
+
+            // The mode is fixed for the camera session; reopen this screen after changing it.
+            let experimentalSettings = self.context.sharedContext.immediateExperimentalUISettings
+            switch experimentalSettings.roundVideoBenchmarkMode {
+            case 1:
+                Camera.roundVideoBenchmarkMode = Camera.isIpad ? .vanilla : .optimizedCurrentResolution
+            case 2:
+                Camera.roundVideoBenchmarkMode = Camera.isIpad ? .vanilla : .optimized640x480
+            default:
+                Camera.roundVideoBenchmarkMode = .vanilla
+            }
             let camera = Camera(
                 configuration: Camera.Configuration(
                     preset: .hd1920x1080,
@@ -1940,109 +1959,136 @@ public class VideoMessageCameraScreen: ViewController {
                 guard let self else {
                     return
                 }
-                let values = MediaEditorValues(
-                    peerId: self.context.account.peerId,
-                    originalDimensions: dimensions,
-                    cropOffset: .zero,
-                    cropRect: CGRect(origin: .zero, size: dimensions.cgSize),
-                    cropScale: 1.0,
-                    cropRotation: 0.0,
-                    cropMirroring: false,
-                    cropOrientation: nil,
-                    gradientColors: nil,
-                    videoTrimRange: self.node.previewState?.trimRange,
-                    videoBounce: false,
-                    videoIsMuted: false,
-                    videoIsFullHd: false,
-                    videoIsMirrored: false,
-                    videoVolume: nil,
-                    additionalVideoPath: nil,
-                    additionalVideoIsDual: false,
-                    additionalVideoMirroringChanges: [],
-                    additionalVideoPosition: nil,
-                    additionalVideoScale: nil,
-                    additionalVideoRotation: nil,
-                    additionalVideoPositionChanges: [],
-                    additionalVideoTrimRange: nil,
-                    additionalVideoOffset: nil,
-                    additionalVideoVolume: nil,
-                    collage: [],
-                    nightTheme: false,
-                    drawing: nil,
-                    maskDrawing: nil,
-                    entities: [],
-                    toolValues: [:],
-                    audioTrack: nil,
-                    audioTrackTrimRange: nil,
-                    audioTrackOffset: nil,
-                    audioTrackVolume: nil,
-                    audioTrackSamples: nil,
-                    collageTrackSamples: nil,
-                    coverImageTimestamp: nil,
-                    coverDimensions: nil,
-                    qualityPreset: .videoMessage
-                )
-                
-                var resourceAdjustments: VideoMediaResourceAdjustments? = nil
-                if let valuesData = try? JSONEncoder().encode(values) {
-                    let data = EngineMemoryBuffer(data: valuesData)
-                    let digest = EngineMemoryBuffer(data: data.md5Digest())
-                    resourceAdjustments = VideoMediaResourceAdjustments(data: data, digest: digest, isStory: false)
-                }
-     
-                let resource: TelegramMediaResource
+                // Snapshot UI state here; file and encoding work runs off-main.
+                let finalizeSignpostID = OSSignpostID(log: RoundVideoSignpost.log)
+                os_signpost(.begin, log: RoundVideoSignpost.log, name: "finalizeToEnqueue", signpostID: finalizeSignpostID)
+                let context = self.context
+                let completion = self.completion
+                let trimRange = self.node.previewState?.trimRange
+                let isViewOnceEnabled = self.cameraState.isViewOnceEnabled
                 let liveUploadData: LegacyLiveUploadInterfaceResult?
                 if let current = self.node.currentLiveUploadData {
                     liveUploadData = current
                 } else {
                     liveUploadData = self.node.liveUploadInterface?.fileUpdated(true) as? LegacyLiveUploadInterfaceResult
                 }
-                if !hasAdjustments, let liveUploadData, let data = try? Data(contentsOf: URL(fileURLWithPath: video.videoPath)) {
-                    resource = LocalFileMediaResource(fileId: liveUploadData.id)
-                    self.context.engine.resources.storeResourceData(id: EngineMediaResource.Id(resource.id), data: data, synchronous: true)
-                } else {
-                    resource = LocalFileVideoMediaResource(randomId: Int64.random(in: Int64.min ... Int64.max), paths: videoPaths, adjustments: resourceAdjustments)
-                }
-                
-                var previewRepresentations: [TelegramMediaImageRepresentation] = []
-                            
-                let thumbnailResource = LocalFileMediaResource(fileId: Int64.random(in: Int64.min ... Int64.max))
-                let thumbnailSize = video.dimensions.cgSize.aspectFitted(CGSize(width: 320.0, height: 320.0))
-                if let thumbnailData = scaleImageToPixelSize(image: thumbnailImage, size: thumbnailSize)?.jpegData(compressionQuality: 0.4) {
-                    self.context.engine.resources.storeResourceData(id: EngineMediaResource.Id(thumbnailResource.id), data: thumbnailData)
-                    previewRepresentations.append(TelegramMediaImageRepresentation(dimensions: PixelDimensions(thumbnailSize), resource: thumbnailResource, progressiveSizes: [], immediateThumbnailData: nil, hasVideo: false, isPersonal: false))
-                }
-                
-                let tempFile = EngineTempBox.shared.tempFile(fileName: "file")
-                defer {
-                    EngineTempBox.shared.dispose(tempFile)
-                }
-                if let data = compressImageToJPEG(thumbnailImage, quality: 0.7, tempFilePath: tempFile.path) {
-                    context.account.postbox.mediaBox.storeCachedResourceRepresentation(resource, representation: CachedVideoFirstFrameRepresentation(), data: data)
-                }
+                let optimizeRoundVideo = Camera.roundVideoOptimizationsEnabled
+                let finalize = {
+                    let values = MediaEditorValues(
+                        peerId: context.account.peerId,
+                        originalDimensions: dimensions,
+                        cropOffset: .zero,
+                        cropRect: CGRect(origin: .zero, size: dimensions.cgSize),
+                        cropScale: 1.0,
+                        cropRotation: 0.0,
+                        cropMirroring: false,
+                        cropOrientation: nil,
+                        gradientColors: nil,
+                        videoTrimRange: trimRange,
+                        videoBounce: false,
+                        videoIsMuted: false,
+                        videoIsFullHd: false,
+                        videoIsMirrored: false,
+                        videoVolume: nil,
+                        additionalVideoPath: nil,
+                        additionalVideoIsDual: false,
+                        additionalVideoMirroringChanges: [],
+                        additionalVideoPosition: nil,
+                        additionalVideoScale: nil,
+                        additionalVideoRotation: nil,
+                        additionalVideoPositionChanges: [],
+                        additionalVideoTrimRange: nil,
+                        additionalVideoOffset: nil,
+                        additionalVideoVolume: nil,
+                        collage: [],
+                        nightTheme: false,
+                        drawing: nil,
+                        maskDrawing: nil,
+                        entities: [],
+                        toolValues: [:],
+                        audioTrack: nil,
+                        audioTrackTrimRange: nil,
+                        audioTrackOffset: nil,
+                        audioTrackVolume: nil,
+                        audioTrackSamples: nil,
+                        collageTrackSamples: nil,
+                        coverImageTimestamp: nil,
+                        coverDimensions: nil,
+                        qualityPreset: .videoMessage
+                    )
 
-                let media = TelegramMediaFile(fileId: EngineMedia.Id(namespace: Namespaces.Media.LocalFile, id: Int64.random(in: Int64.min ... Int64.max)), partialReference: nil, resource: resource, previewRepresentations: previewRepresentations, videoThumbnails: [], immediateThumbnailData: nil, mimeType: "video/mp4", size: nil, attributes: [.FileName(fileName: "video.mp4"), .Video(duration: finalDuration, size: video.dimensions, flags: [.instantRoundVideo], preloadSize: nil, coverTime: nil, videoCodec: nil)], alternativeRepresentations: [])
+                    var resourceAdjustments: VideoMediaResourceAdjustments? = nil
+                    if let valuesData = try? JSONEncoder().encode(values) {
+                        let data = EngineMemoryBuffer(data: valuesData)
+                        let digest = EngineMemoryBuffer(data: data.md5Digest())
+                        resourceAdjustments = VideoMediaResourceAdjustments(data: data, digest: digest, isStory: false)
+                    }
+
+                    let resource: TelegramMediaResource
+                    if !hasAdjustments, let liveUploadData, let data = try? Data(contentsOf: URL(fileURLWithPath: video.videoPath)) {
+                        resource = LocalFileMediaResource(fileId: liveUploadData.id)
+                        context.engine.resources.storeResourceData(id: EngineMediaResource.Id(resource.id), data: data, synchronous: true)
+                    } else {
+                        resource = LocalFileVideoMediaResource(randomId: Int64.random(in: Int64.min ... Int64.max), paths: videoPaths, adjustments: resourceAdjustments)
+                    }
                 
-                var attributes: [EngineMessage.Attribute] = []
-                if self.cameraState.isViewOnceEnabled {
-                    attributes.append(AutoremoveTimeoutMessageAttribute(timeout: viewOnceTimeout, countdownBeginTime: nil))
+                    var previewRepresentations: [TelegramMediaImageRepresentation] = []
+                            
+                    let thumbnailResource = LocalFileMediaResource(fileId: Int64.random(in: Int64.min ... Int64.max))
+                    let thumbnailSize = video.dimensions.cgSize.aspectFitted(CGSize(width: 320.0, height: 320.0))
+                    if let thumbnailData = scaleImageToPixelSize(image: thumbnailImage, size: thumbnailSize)?.jpegData(compressionQuality: 0.4) {
+                        context.engine.resources.storeResourceData(id: EngineMediaResource.Id(thumbnailResource.id), data: thumbnailData)
+                        previewRepresentations.append(TelegramMediaImageRepresentation(dimensions: PixelDimensions(thumbnailSize), resource: thumbnailResource, progressiveSizes: [], immediateThumbnailData: nil, hasVideo: false, isPersonal: false))
+                    }
+                
+                    let tempFile = EngineTempBox.shared.tempFile(fileName: "file")
+                    defer {
+                        EngineTempBox.shared.dispose(tempFile)
+                    }
+                    if let data = compressImageToJPEG(thumbnailImage, quality: 0.7, tempFilePath: tempFile.path) {
+                        context.account.postbox.mediaBox.storeCachedResourceRepresentation(resource, representation: CachedVideoFirstFrameRepresentation(), data: data)
+                    }
+
+                    let media = TelegramMediaFile(fileId: EngineMedia.Id(namespace: Namespaces.Media.LocalFile, id: Int64.random(in: Int64.min ... Int64.max)), partialReference: nil, resource: resource, previewRepresentations: previewRepresentations, videoThumbnails: [], immediateThumbnailData: nil, mimeType: "video/mp4", size: nil, attributes: [.FileName(fileName: "video.mp4"), .Video(duration: finalDuration, size: video.dimensions, flags: [.instantRoundVideo], preloadSize: nil, coverTime: nil, videoCodec: nil)], alternativeRepresentations: [])
+                
+                    var attributes: [EngineMessage.Attribute] = []
+                    if isViewOnceEnabled {
+                        attributes.append(AutoremoveTimeoutMessageAttribute(timeout: viewOnceTimeout, countdownBeginTime: nil))
+                    }
+                    if let messageEffect {
+                        attributes.append(EffectMessageAttribute(id: messageEffect.id))
+                    }
+
+                    let enqueue = {
+                        os_signpost(.end, log: RoundVideoSignpost.log, name: "finalizeToEnqueue", signpostID: finalizeSignpostID)
+                        completion(.message(
+                            text: "",
+                            attributes: attributes,
+                            inlineStickers: [:],
+                            mediaReference: .standalone(media: media),
+                            threadId: nil,
+                            replyToMessageId: nil,
+                            replyToStoryId: nil,
+                            localGroupingKey: nil,
+                            correlationId: nil,
+                            bubbleUpEmojiOrStickersets: []
+                        ), silentPosting, scheduleTime, repeatPeriod)
+                    }
+                    if optimizeRoundVideo {
+                        Queue.mainQueue().async {
+                            enqueue()
+                        }
+                    } else {
+                        enqueue()
+                    }
                 }
-                if let messageEffect {
-                    attributes.append(EffectMessageAttribute(id: messageEffect.id))
+                if optimizeRoundVideo {
+                    Queue.concurrentDefaultQueue().async {
+                        finalize()
+                    }
+                } else {
+                    finalize()
                 }
-        
-                self.completion(.message(
-                    text: "",
-                    attributes: attributes,
-                    inlineStickers: [:],
-                    mediaReference: .standalone(media: media),
-                    threadId: nil,
-                    replyToMessageId: nil,
-                    replyToStoryId: nil,
-                    localGroupingKey: nil,
-                    correlationId: nil,
-                    bubbleUpEmojiOrStickersets: []
-                ), silentPosting, scheduleTime, repeatPeriod)
             })
         })
     }

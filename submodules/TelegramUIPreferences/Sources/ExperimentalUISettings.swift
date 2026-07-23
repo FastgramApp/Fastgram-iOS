@@ -73,7 +73,8 @@ public struct ExperimentalUISettings: Codable, Equatable {
     public var forceClearGlass: Bool
     public var debugRipple: Bool
     public var debugRichText: Bool
-    
+    public var roundVideoBenchmarkMode: Int32
+
     public static var defaultSettings: ExperimentalUISettings {
         return ExperimentalUISettings(
             keepChatNavigationStack: false,
@@ -123,7 +124,8 @@ public struct ExperimentalUISettings: Codable, Equatable {
             enablePWA: false,
             forceClearGlass: false,
             debugRipple: false,
-            debugRichText: false
+            debugRichText: false,
+            roundVideoBenchmarkMode: 0
         )
     }
     
@@ -175,7 +177,8 @@ public struct ExperimentalUISettings: Codable, Equatable {
         enablePWA: Bool,
         forceClearGlass: Bool,
         debugRipple: Bool,
-        debugRichText: Bool
+        debugRichText: Bool,
+        roundVideoBenchmarkMode: Int32
     ) {
         self.keepChatNavigationStack = keepChatNavigationStack
         self.skipReadHistory = skipReadHistory
@@ -225,8 +228,9 @@ public struct ExperimentalUISettings: Codable, Equatable {
         self.forceClearGlass = forceClearGlass
         self.debugRipple = debugRipple
         self.debugRichText = debugRichText
+        self.roundVideoBenchmarkMode = roundVideoBenchmarkMode
     }
-    
+
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: StringCodingKey.self)
 
@@ -278,6 +282,7 @@ public struct ExperimentalUISettings: Codable, Equatable {
         self.forceClearGlass = try container.decodeIfPresent(Bool.self, forKey: "forceClearGlass") ?? false
         self.debugRipple = try container.decodeIfPresent(Bool.self, forKey: "debugRipple") ?? false
         self.debugRichText = try container.decodeIfPresent(Bool.self, forKey: "debugRichText") ?? false
+        self.roundVideoBenchmarkMode = try container.decodeIfPresent(Int32.self, forKey: "roundVideoBenchmarkMode") ?? 0
     }
     
     public func encode(to encoder: Encoder) throws {
@@ -331,6 +336,7 @@ public struct ExperimentalUISettings: Codable, Equatable {
         try container.encodeIfPresent(self.forceClearGlass, forKey: "forceClearGlass")
         try container.encodeIfPresent(self.debugRipple, forKey: "debugRipple")
         try container.encodeIfPresent(self.debugRichText, forKey: "debugRichText")
+        try container.encodeIfPresent(self.roundVideoBenchmarkMode, forKey: "roundVideoBenchmarkMode")
     }
 }
 

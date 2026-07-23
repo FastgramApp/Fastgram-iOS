@@ -1,4 +1,5 @@
 import Foundation
+import os
 import AVFoundation
 import SwiftSignalKit
 import TelegramCore
@@ -62,105 +63,198 @@ final class CameraDevice {
         }
     }
     
-    func configureDeviceFormat(maxDimensions: CMVideoDimensions, maxFramerate: Double) {
+    // Capped round-video modes rank eligible formats explicitly and fall back to the default
+    // dimensions when a device exposes no format under the requested cap.
+    func configureDeviceFormat(maxDimensions: CMVideoDimensions, maxFramerate: Double, requireMultiCamSupported: Bool = false, preferBinned: Bool = false, fallbackDimensions: CMVideoDimensions? = nil) {
         guard let device = self.videoDevice else {
             return
         }
         self.transaction(device) { device in
-            var maxWidth: Int32 = 0
-            var maxHeight: Int32 = 0
-            var hasSecondaryZoomLevels = false
-            var candidates: [AVCaptureDevice.Format] = []
-            var photoCandidates: [AVCaptureDevice.Format] = []
-     outer: for format in device.formats {
-                if format.mediaType != .video || format.value(forKey: "isPhotoFormat") as? Bool == true {
-                    continue
-                }
-                
-                let dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
-                if dimensions.width >= maxWidth && dimensions.width <= maxDimensions.width && dimensions.height >= maxHeight && dimensions.height <= maxDimensions.height {
-                    if dimensions.width > maxWidth {
-                        hasSecondaryZoomLevels = false
-                        candidates.removeAll()
-                    }
-                    let subtype = CMFormatDescriptionGetMediaSubType(format.formatDescription)
-                    if subtype == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange {
-                        for range in format.videoSupportedFrameRateRanges {
-                            if range.maxFrameRate > 60 {
-                                continue outer
-                            }
-                        }
-                        
-                        maxWidth = dimensions.width
-                        maxHeight = dimensions.height
-                        
-                        if #available(iOS 16.0, *), !format.secondaryNativeResolutionZoomFactors.isEmpty {
-                            hasSecondaryZoomLevels = true
-                            candidates.append(format)
-                            if format.isHighPhotoQualitySupported {
-                                photoCandidates.append(format)
-                            }
-                        } else if !hasSecondaryZoomLevels {
-                            candidates.append(format)
-                            if #available(iOS 15.0, *), format.isHighPhotoQualitySupported {
-                                photoCandidates.append(format)
-                            }
-                        }
-                    }
-                }
+            let bestFormat: AVCaptureDevice.Format?
+            if preferBinned {
+                bestFormat = self.selectRoundVideoFormat(for: device, maxDimensions: maxDimensions, requireMultiCamSupported: requireMultiCamSupported, fallbackDimensions: fallbackDimensions)
+            } else {
+                bestFormat = self.selectLegacyFormat(for: device, maxDimensions: maxDimensions, maxFramerate: maxFramerate)
             }
-            
-            if !candidates.isEmpty {
-                var bestFormat: AVCaptureDevice.Format?
-    photoOuter: for format in photoCandidates {
-                    for range in format.videoSupportedFrameRateRanges {
-                        if range.maxFrameRate > maxFramerate {
-                            continue photoOuter
-                        }
-                        bestFormat = format
-                    }
-                }
-                if bestFormat == nil {
-             outer: for format in candidates {
-                        for range in format.videoSupportedFrameRateRanges {
-                            if range.maxFrameRate > maxFramerate {
-                                continue outer
-                            }
-                            bestFormat = format
-                        }
-                    }
-                }
-                if bestFormat == nil {
-                    bestFormat = candidates.last
-                }
-                device.activeFormat = bestFormat!
-                    
+
+            if let bestFormat {
+                device.activeFormat = bestFormat
+
                 Logger.shared.log("Camera", "Selected format:")
-                Logger.shared.log("Camera", bestFormat!.description)
+                Logger.shared.log("Camera", bestFormat.description)
+                if #available(iOS 13.0, *) {
+                    Logger.shared.log("Camera", "Selected format isMultiCamSupported: \(bestFormat.isMultiCamSupported), isVideoBinned: \(bestFormat.isVideoBinned), videoFieldOfView: \(bestFormat.videoFieldOfView)")
+                }
             } else {
                 Logger.shared.log("Camera", "No format selected")
             }
-            
+
             #if DEBUG
             Logger.shared.log("Camera", "Available formats:")
             for format in device.formats {
                 Logger.shared.log("Camera", format.description)
             }
             #endif
-            
+
             if let targetFPS = device.actualFPS(maxFramerate) {
                 device.activeVideoMinFrameDuration = targetFPS.duration
                 device.activeVideoMaxFrameDuration = targetFPS.duration
             }
-            
+
             if device.isLowLightBoostSupported {
                 device.automaticallyEnablesLowLightBoostWhenAvailable = true
             }
-                        
+
             if device.isExposureModeSupported(.continuousAutoExposure) {
                 device.exposureMode = .continuousAutoExposure
             }
         }
+    }
+
+    private func selectLegacyFormat(for device: AVCaptureDevice, maxDimensions: CMVideoDimensions, maxFramerate: Double) -> AVCaptureDevice.Format? {
+        var maxWidth: Int32 = 0
+        var maxHeight: Int32 = 0
+        var hasSecondaryZoomLevels = false
+        var candidates: [AVCaptureDevice.Format] = []
+        var photoCandidates: [AVCaptureDevice.Format] = []
+ outer: for format in device.formats {
+            if format.mediaType != .video || format.value(forKey: "isPhotoFormat") as? Bool == true {
+                continue
+            }
+
+            let dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+            if dimensions.width >= maxWidth && dimensions.width <= maxDimensions.width && dimensions.height >= maxHeight && dimensions.height <= maxDimensions.height {
+                if dimensions.width > maxWidth {
+                    hasSecondaryZoomLevels = false
+                    candidates.removeAll()
+                }
+                let subtype = CMFormatDescriptionGetMediaSubType(format.formatDescription)
+                if subtype == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange {
+                    for range in format.videoSupportedFrameRateRanges {
+                        if range.maxFrameRate > 60 {
+                            continue outer
+                        }
+                    }
+
+                    maxWidth = dimensions.width
+                    maxHeight = dimensions.height
+
+                    if #available(iOS 16.0, *), !format.secondaryNativeResolutionZoomFactors.isEmpty {
+                        hasSecondaryZoomLevels = true
+                        candidates.append(format)
+                        if format.isHighPhotoQualitySupported {
+                            photoCandidates.append(format)
+                        }
+                    } else if !hasSecondaryZoomLevels {
+                        candidates.append(format)
+                        if #available(iOS 15.0, *), format.isHighPhotoQualitySupported {
+                            photoCandidates.append(format)
+                        }
+                    }
+                }
+            }
+        }
+
+        guard !candidates.isEmpty else {
+            return nil
+        }
+
+        var bestFormat: AVCaptureDevice.Format?
+photoOuter: for format in photoCandidates {
+            for range in format.videoSupportedFrameRateRanges {
+                if range.maxFrameRate > maxFramerate {
+                    continue photoOuter
+                }
+                bestFormat = format
+            }
+        }
+        if bestFormat == nil {
+     outer: for format in candidates {
+                for range in format.videoSupportedFrameRateRanges {
+                    if range.maxFrameRate > maxFramerate {
+                        continue outer
+                    }
+                    bestFormat = format
+                }
+            }
+        }
+        if bestFormat == nil {
+            bestFormat = candidates.last
+        }
+        return bestFormat
+    }
+
+    private func roundVideoFormatCandidates(for device: AVCaptureDevice, maxDimensions: CMVideoDimensions, requireMultiCamSupported: Bool) -> [AVCaptureDevice.Format] {
+        var result: [AVCaptureDevice.Format] = []
+        for format in device.formats {
+            if format.mediaType != .video || format.value(forKey: "isPhotoFormat") as? Bool == true {
+                continue
+            }
+            let dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+            if dimensions.width > maxDimensions.width || dimensions.height > maxDimensions.height {
+                continue
+            }
+            if CMFormatDescriptionGetMediaSubType(format.formatDescription) != kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange {
+                continue
+            }
+            if requireMultiCamSupported {
+                if #available(iOS 13.0, *) {
+                    if !format.isMultiCamSupported {
+                        continue
+                    }
+                } else {
+                    continue
+                }
+            }
+            var supports30 = false
+            var exceeds60 = false
+            for range in format.videoSupportedFrameRateRanges {
+                if range.maxFrameRate > 60.0 {
+                    exceeds60 = true
+                }
+                if range.minFrameRate <= 30.0 && range.maxFrameRate >= 30.0 {
+                    supports30 = true
+                }
+            }
+            if exceeds60 || !supports30 {
+                continue
+            }
+            result.append(format)
+        }
+        return result
+    }
+
+    // Prefer resolution first, then binning among otherwise equivalent formats.
+    private func bestRegularRoundVideoFormat(in candidates: [AVCaptureDevice.Format]) -> AVCaptureDevice.Format? {
+        return candidates.min { a, b in
+            let dimensionsA = CMVideoFormatDescriptionGetDimensions(a.formatDescription)
+            let dimensionsB = CMVideoFormatDescriptionGetDimensions(b.formatDescription)
+            if dimensionsA.width != dimensionsB.width {
+                return dimensionsA.width > dimensionsB.width
+            }
+            if dimensionsA.height != dimensionsB.height {
+                return dimensionsA.height > dimensionsB.height
+            }
+            if a.isVideoBinned != b.isVideoBinned {
+                return a.isVideoBinned
+            }
+            return false
+        }
+    }
+
+    private func selectRoundVideoFormat(for device: AVCaptureDevice, maxDimensions: CMVideoDimensions, requireMultiCamSupported: Bool, fallbackDimensions: CMVideoDimensions?) -> AVCaptureDevice.Format? {
+        var candidates = self.roundVideoFormatCandidates(for: device, maxDimensions: maxDimensions, requireMultiCamSupported: requireMultiCamSupported)
+        if candidates.isEmpty, let fallbackDimensions {
+            // Keep capture working on devices without a format under the requested cap.
+            Logger.shared.log("Camera", "Capture cap yielded no eligible formats, falling back to default dimensions")
+            os_signpost(.event, log: RoundVideoSignpost.log, name: "captureCapFallback")
+            candidates = self.roundVideoFormatCandidates(for: device, maxDimensions: fallbackDimensions, requireMultiCamSupported: requireMultiCamSupported)
+        }
+        guard !candidates.isEmpty else {
+            return nil
+        }
+
+        return self.bestRegularRoundVideoFormat(in: candidates)
     }
     
     func transaction(_ device: AVCaptureDevice, update: (AVCaptureDevice) -> Void) {
