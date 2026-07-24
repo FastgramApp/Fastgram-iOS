@@ -2,6 +2,14 @@
 
 Fastgram is an unofficial Telegram client based on Telegram-iOS. Internal Bazel targets and module names remain `Telegram` to keep upstream synchronization manageable; the installed app name, bundle identifier and URL scheme are configured for Fastgram.
 
+## License and trademarks
+
+Fastgram's modifications are licensed under the GNU General Public License,
+version 2 or any later version. See [COPYING](COPYING) and
+[NOTICE.md](NOTICE.md). The software license does not grant permission to use
+Fastgram's name, logo, icon, or other brand elements; see
+[TRADEMARKS.md](TRADEMARKS.md).
+
 ## Private build configuration
 
 API credentials and Apple account values must not be committed. Create the ignored local configuration:

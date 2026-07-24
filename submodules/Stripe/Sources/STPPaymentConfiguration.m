@@ -27,7 +27,13 @@
     if (self) {
         _additionalPaymentMethods = STPPaymentMethodTypeAll;
         _requiredBillingAddressFields = STPBillingAddressFieldsNone;
-        _companyName = @"Telegram";
+        _companyName = [[[NSBundle mainBundle] localizedInfoDictionary] objectForKey:@"CFBundleDisplayName"];
+        if (_companyName == nil) {
+            _companyName = [[[NSBundle mainBundle] infoDictionary] objectForKey:@"CFBundleDisplayName"];
+        }
+        if (_companyName == nil) {
+            _companyName = @"Fastgram";
+        }
         _smsAutofillDisabled = NO;
     }
     return self;
@@ -54,4 +60,3 @@
 }
 
 @end
-
