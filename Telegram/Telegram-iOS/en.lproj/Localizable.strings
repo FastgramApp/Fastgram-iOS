@@ -16598,3 +16598,9 @@ Error: %8$@";
 "TextProcessing.ActionGenerate" = "Generate";
 "TextProcessing.StyleList.Prompt" = "Prompt";
 "TextProcessing.PromptPlaceholder" = "Generate text, formulas, or tables...";
+
+"FastgramSettings.Title" = "Fastgram";
+"FastgramSettings.VideoMessagesHeader" = "VIDEO MESSAGES";
+"FastgramSettings.VideoMessagesOptimized" = "Optimized";
+"FastgramSettings.VideoMessagesOriginal" = "Original";
+"FastgramSettings.VideoMessagesInfo" = "Optimized uses Fastgram's more efficient recording pipeline while keeping Telegram's original video quality. Original uses Telegram's legacy pipeline. Changes apply the next time you open the video-message camera.";

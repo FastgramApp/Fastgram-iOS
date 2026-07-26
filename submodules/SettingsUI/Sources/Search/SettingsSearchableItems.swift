@@ -4074,16 +4074,6 @@ private func appearanceSearchableItems(context: AccountContext) -> [SettingsSear
             }
         ),
         SettingsSearchableItem(
-            id: "appearance/app-icon",
-            title: strings.Appearance_AppIcon.capitalized,
-            alternate: [],
-            icon: icon,
-            breadcrumbs: [strings.Settings_Appearance],
-            present: { context, _, present in
-                presentAppearanceSettings(context, present, .icon)
-            }
-        ),
-        SettingsSearchableItem(
             id: "appearance/animations",
             title: strings.Appearance_Animations.capitalized,
             alternate: [],

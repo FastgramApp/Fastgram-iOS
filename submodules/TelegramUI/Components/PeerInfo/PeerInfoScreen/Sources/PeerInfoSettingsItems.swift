@@ -18,6 +18,7 @@ enum SettingsSection: Int, CaseIterable {
     case phone
     case accounts
     case myProfile
+    case fastgram
     case proxy
     case apps
     case shortcuts
@@ -151,6 +152,10 @@ func settingsItems(data: PeerInfoScreenData?, context: AccountContext, presentat
             interaction.openSettings(.profile)
         }))
         
+        items[.fastgram]!.append(PeerInfoScreenDisclosureItem(id: 0, text: presentationData.strings.FastgramSettings_Title, icon: PresentationResourcesSettings.fastgram, action: {
+            interaction.openSettings(.fastgram)
+        }))
+
         if !settings.proxySettings.servers.isEmpty {
             let proxyType: String
             if settings.proxySettings.enabled, let activeServer = settings.proxySettings.activeServer {

@@ -125,7 +125,7 @@ public struct ExperimentalUISettings: Codable, Equatable {
             forceClearGlass: false,
             debugRipple: false,
             forceNewTextInput: false,
-            roundVideoBenchmarkMode: 0
+            roundVideoBenchmarkMode: 1
         )
     }
     
@@ -282,7 +282,7 @@ public struct ExperimentalUISettings: Codable, Equatable {
         self.forceClearGlass = try container.decodeIfPresent(Bool.self, forKey: "forceClearGlass") ?? false
         self.debugRipple = try container.decodeIfPresent(Bool.self, forKey: "debugRipple") ?? false
         self.forceNewTextInput = try container.decodeIfPresent(Bool.self, forKey: "forceNewTextInput") ?? false
-        self.roundVideoBenchmarkMode = try container.decodeIfPresent(Int32.self, forKey: "roundVideoBenchmarkMode") ?? 0
+        self.roundVideoBenchmarkMode = try container.decodeIfPresent(Int32.self, forKey: "roundVideoBenchmarkMode") ?? 1
     }
     
     public func encode(to encoder: Encoder) throws {
