@@ -52,6 +52,7 @@ load(
     "telegram_team_id",
     "telegram_app_specific_url_scheme",
     "telegram_enable_icloud",
+    "telegram_enable_communication_notifications",
     "telegram_enable_siri",
 )
 
@@ -537,11 +538,13 @@ app_groups_fragment = """
     telegram_bundle_id=telegram_bundle_id
 )
 
-official_communication_notifications_fragment = """
+communication_notifications_entitlement = """
 <key>com.apple.developer.usernotifications.communication</key>
 <true/>
 """
-communication_notifications_fragment = official_communication_notifications_fragment if telegram_bundle_id in official_bundle_ids else ""
+communication_notifications_fragment = communication_notifications_entitlement if (
+    telegram_enable_communication_notifications or telegram_bundle_id in official_bundle_ids
+) else ""
 
 official_notification_filtering_fragment = """
 <key>com.apple.developer.usernotifications.filtering</key>

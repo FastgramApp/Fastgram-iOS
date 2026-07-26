@@ -12,4 +12,5 @@ telegram_premium_iap_product_id = "org.telegram.telegramPremium.monthly"
 telegram_aps_environment = "production"
 telegram_enable_siri = True
 telegram_enable_icloud = True
+telegram_enable_communication_notifications = False
 telegram_enable_watch = True
