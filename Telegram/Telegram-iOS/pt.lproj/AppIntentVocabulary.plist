@@ -12,6 +12,38 @@
 				<string>Enviar uma mensagem no Telegram para a Alice dizendo que eu chegarei lá em 15 minutos</string>
 			</array>
 		</dict>
+		<dict>
+			<key>IntentName</key>
+			<string>INStartAudioCallIntent</string>
+			<key>IntentExamples</key>
+			<array>
+				<string>Liga para a Alice pelo Fastgram</string>
+			</array>
+		</dict>
+		<dict>
+			<key>IntentName</key>
+			<string>INSearchForMessagesIntent</string>
+			<key>IntentExamples</key>
+			<array>
+				<string>Pesquisa mensagens da Alice no Fastgram</string>
+			</array>
+		</dict>
+		<dict>
+			<key>IntentName</key>
+			<string>INSetMessageAttributeIntent</string>
+			<key>IntentExamples</key>
+			<array>
+				<string>Marca como lida a última mensagem da Alice no Fastgram</string>
+			</array>
+		</dict>
+		<dict>
+			<key>IntentName</key>
+			<string>INSearchCallHistoryIntent</string>
+			<key>IntentExamples</key>
+			<array>
+				<string>Mostra as minhas chamadas recentes no Fastgram</string>
+			</array>
+		</dict>
 	</array>
 </dict>
 </plist>

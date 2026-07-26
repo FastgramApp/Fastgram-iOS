@@ -12,6 +12,38 @@
 				<string>أرسل رسالة لخالد عبر تيليجرام (Telegram) وأخبره أن هديته وصلت إلى المنزل</string>
 			</array>
 		</dict>
+		<dict>
+			<key>IntentName</key>
+			<string>INStartAudioCallIntent</string>
+			<key>IntentExamples</key>
+			<array>
+				<string>اتصل بأليكس عبر Fastgram</string>
+			</array>
+		</dict>
+		<dict>
+			<key>IntentName</key>
+			<string>INSearchForMessagesIntent</string>
+			<key>IntentExamples</key>
+			<array>
+				<string>ابحث عن الرسائل من أليكس في Fastgram</string>
+			</array>
+		</dict>
+		<dict>
+			<key>IntentName</key>
+			<string>INSetMessageAttributeIntent</string>
+			<key>IntentExamples</key>
+			<array>
+				<string>علّم آخر رسالة من أليكس كمقروءة في Fastgram</string>
+			</array>
+		</dict>
+		<dict>
+			<key>IntentName</key>
+			<string>INSearchCallHistoryIntent</string>
+			<key>IntentExamples</key>
+			<array>
+				<string>اعرض مكالماتي الأخيرة في Fastgram</string>
+			</array>
+		</dict>
 	</array>
 </dict>
 </plist>

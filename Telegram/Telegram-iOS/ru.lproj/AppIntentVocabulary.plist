@@ -12,6 +12,38 @@
 				<string>Отправить Алисе сообщение в Telegram: я буду через 10 минут</string>
 			</array>
 		</dict>
+		<dict>
+			<key>IntentName</key>
+			<string>INStartAudioCallIntent</string>
+			<key>IntentExamples</key>
+			<array>
+				<string>Позвони Алисе через Fastgram</string>
+			</array>
+		</dict>
+		<dict>
+			<key>IntentName</key>
+			<string>INSearchForMessagesIntent</string>
+			<key>IntentExamples</key>
+			<array>
+				<string>Найди сообщения от Алисы в Fastgram</string>
+			</array>
+		</dict>
+		<dict>
+			<key>IntentName</key>
+			<string>INSetMessageAttributeIntent</string>
+			<key>IntentExamples</key>
+			<array>
+				<string>Отметь последнее сообщение от Алисы в Fastgram как прочитанное</string>
+			</array>
+		</dict>
+		<dict>
+			<key>IntentName</key>
+			<string>INSearchCallHistoryIntent</string>
+			<key>IntentExamples</key>
+			<array>
+				<string>Покажи мои недавние звонки в Fastgram</string>
+			</array>
+		</dict>
 	</array>
 </dict>
 </plist>
