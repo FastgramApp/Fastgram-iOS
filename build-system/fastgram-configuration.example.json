@@ -9,7 +9,7 @@
   "appstore_id": "6794449069",
   "app_specific_url_scheme": "fastgram",
   "premium_iap_product_id": "",
-  "enable_siri": false,
+  "enable_siri": true,
   "enable_icloud": false,
   "enable_communication_notifications": true
 }
