@@ -46,11 +46,12 @@ func _internal_registerNotificationToken(account: Account, token: Data, type: No
             return true
         }
         |> `catch` { error -> Signal<Bool, NoError> in
-            let wasInvalidated = error.errorDescription == "TOKEN_WAS_INVALIDATED"
+            let errorDescription = error.errorDescription ?? "unknown"
+            let wasInvalidated = errorDescription == "TOKEN_WAS_INVALIDATED"
             // Every error other than TOKEN_WAS_INVALIDATED is reported upstream as a
             // successful registration, so log the server's actual response before it is
             // discarded — otherwise a genuine failure is indistinguishable from success.
-            Logger.shared.log("RegisterNotificationToken", "account.registerDevice failed (tokenType: \(mappedType), sandbox: \(sandbox), code: \(error.errorCode), description: \(error.errorDescription)) -> reported as \(wasInvalidated ? "invalidated" : "success")")
+            Logger.shared.log("RegisterNotificationToken", "account.registerDevice failed (tokenType: \(mappedType), sandbox: \(sandbox), code: \(error.errorCode), description: \(errorDescription)) -> reported as \(wasInvalidated ? "invalidated" : "success")")
             if wasInvalidated {
                 return .single(false)
             } else {
