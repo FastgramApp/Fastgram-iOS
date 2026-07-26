@@ -2013,8 +2013,19 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
         Logger.shared.log("App \(self.episodeId)", "terminating")
     }
     
+    /// A short, stable identifier for an APNs token, so the same token can be correlated
+    /// across launches and log files without ever recording the token itself.
+    private func redactedTokenHash(_ token: Data) -> String {
+        var hash: UInt64 = 0xcbf29ce484222325
+        for byte in token {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x100000001b3
+        }
+        return String(format: "%08x", UInt32(truncatingIfNeeded: hash))
+    }
+
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
-        Logger.shared.log("App \(self.episodeId)", "register for notifications: didRegisterForRemoteNotificationsWithDeviceToken (deviceToken: \(hexString(deviceToken)))")
+        Logger.shared.log("App \(self.episodeId)", "register for notifications: didRegisterForRemoteNotificationsWithDeviceToken (tokenHash: \(self.redactedTokenHash(deviceToken)), tokenLength: \(deviceToken.count))")
         self.notificationTokenPromise.set(.single(deviceToken))
     }
     

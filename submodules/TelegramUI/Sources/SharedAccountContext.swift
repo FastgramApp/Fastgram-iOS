@@ -1629,7 +1629,9 @@ public final class SharedAccountContextImpl: SharedAccountContext {
         #else
         sandbox = false
         #endif
-        
+
+        Logger.shared.log("SharedAccountContext", "updateNotificationTokensRegistration: begin (apsEnvironment: \(sandbox ? "sandbox" : "production"))")
+
         let settings = self.accountManager.sharedData(keys: [ApplicationSpecificSharedDataKeys.inAppNotificationSettings])
         |> map { sharedData -> (allAccounts: Bool, includeMuted: Bool) in
             let settings = sharedData.entries[ApplicationSpecificSharedDataKeys.inAppNotificationSettings]?.get(InAppNotificationSettings.self) ?? InAppNotificationSettings.defaultSettings
@@ -1677,6 +1679,8 @@ public final class SharedAccountContextImpl: SharedAccountContext {
                 }
             }
             
+            Logger.shared.log("SharedAccountContext", "updateNotificationTokensRegistration: applying (activeAccounts: \(activeAccounts.count), registeringProduction: \(activeProductionUserIds.count), registeringTesting: \(activeTestingUserIds.count), apsToken: \(apsNotificationToken != nil ? "present" : "absent"), allAccounts: \(settings.allAccounts))")
+
             for (_, account, _) in activeAccounts {
                 let appliedAps: Signal<Bool, NoError>
                 let appliedVoip: Signal<Never, NoError>
@@ -1742,6 +1746,7 @@ public final class SharedAccountContextImpl: SharedAccountContext {
             }
         }
         |> deliverOnMainQueue).start(next: { [weak self] allApsSuccess, apsToken in
+            Logger.shared.log("SharedAccountContext", "updateNotificationTokensRegistration: result (allApsSuccess: \(allApsSuccess), apsToken: \(apsToken != nil ? "present" : "absent"))")
             guard let self, let appDelegate = self.appDelegate else {
                 return
             }
