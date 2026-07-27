@@ -30,8 +30,7 @@ private let queue = Queue()
 private let legacyNotificationsFix: Bool = true
 
 private let emptyNotificationThreadId = "empty-notification"
-private let maxNotificationRemovalTries = 30
-private let notificationRemovalRetryDelay: Double = 0.05
+private let emptyNotificationRemovalDelay: Double = 0.25
 
 @available(iOSApplicationExtension 10.0, iOS 10.0, *)
 private func deliveredEmptyNotificationIdentifiers(_ notifications: [UNNotification]) -> [String] {
@@ -722,8 +721,7 @@ private struct NotificationContent: CustomStringConvertible {
         }
 
         if legacyNotificationsFix && content.title.isEmpty && content.subtitle.isEmpty && content.body.isEmpty && content.attachments.isEmpty {
-            // A service push, which will be displayed regardless of how empty it is. Make it
-            // unobtrusive, and tag it so it can be found and removed again.
+            // A service push. It will be displayed regardless, so make it unobtrusive and tag it.
             content.title = " "
             content.sound = nil
             content.threadIdentifier = emptyNotificationThreadId
@@ -2579,47 +2577,23 @@ final class NotificationService: UNNotificationServiceExtension {
     private var contentHandler: ((UNNotificationContent) -> Void)?
     private var episode: String?
 
-    private var emptyNotificationRemoved = false
-    private var notificationRemovalTries = 0
-
     override init() {
         super.init()
     }
 
-    private func sweepEmptyNotifications() {
-        if !legacyNotificationsFix {
-            return
-        }
+    /// Removal is async with no completion and the extension dies shortly after the content
+    /// handler runs, so it has to be started before delivery and given a moment to land.
+    private func deliverEmptyNotification(_ content: UNNotificationContent, using contentHandler: @escaping (UNNotificationContent) -> Void) {
         UNUserNotificationCenter.current().getDeliveredNotifications(completionHandler: { notifications in
             let identifiers = deliveredEmptyNotificationIdentifiers(notifications)
             if !identifiers.isEmpty {
                 UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: identifiers)
             }
         })
-    }
-
-    /// The notification does not exist until the content handler is called, so it can only be
-    /// removed by polling for it afterwards. Best effort — the extension may be suspended first,
-    /// in which case `sweepEmptyNotifications` picks it up on the next invocation.
-    private func removeDeliveredEmptyNotification() {
-        if !legacyNotificationsFix {
-            return
-        }
-        if self.emptyNotificationRemoved || self.notificationRemovalTries >= maxNotificationRemovalTries {
-            return
-        }
-        self.notificationRemovalTries += 1
-        UNUserNotificationCenter.current().getDeliveredNotifications(completionHandler: { [weak self] notifications in
-            let identifiers = deliveredEmptyNotificationIdentifiers(notifications)
-            if identifiers.isEmpty {
-                // Back off rather than spin, or the retry budget is gone before delivery happens.
-                DispatchQueue.global().asyncAfter(deadline: .now() + notificationRemovalRetryDelay, execute: {
-                    self?.removeDeliveredEmptyNotification()
-                })
-            } else {
-                UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: identifiers)
-                self?.emptyNotificationRemoved = true
-            }
+        // Deliberately not nested inside getDeliveredNotifications' completion: if that never
+        // fires the notification would never be delivered at all.
+        DispatchQueue.main.asyncAfter(deadline: .now() + emptyNotificationRemovalDelay, execute: {
+            contentHandler(content)
         })
     }
 
@@ -2634,8 +2608,6 @@ final class NotificationService: UNNotificationServiceExtension {
 
         let content = self.content
 
-        self.sweepEmptyNotifications()
-
         let completed: () -> Void = { [weak self] in
             guard let strongSelf = self else {
                 return
@@ -2649,9 +2621,10 @@ final class NotificationService: UNNotificationServiceExtension {
 
                 if let content = content.with({ $0 }) {
                     let generated = content.generate()
-                    contentHandler(generated)
                     if generated.threadIdentifier == emptyNotificationThreadId {
-                        strongSelf.removeDeliveredEmptyNotification()
+                        strongSelf.deliverEmptyNotification(generated, using: contentHandler)
+                    } else {
+                        contentHandler(generated)
                     }
                 } else if let initialContent = strongSelf.initialContent {
                     contentHandler(initialContent)
@@ -2673,9 +2646,8 @@ final class NotificationService: UNNotificationServiceExtension {
             )
             if handler == nil {
                 // A rejected payload never calls `completed`, leaving the notification to hang
-                // until the 30s expiry. Complete now instead, delivering the original payload
-                // unchanged since it may still be a genuine message. Deferred one tick so that
-                // `self.impl` is assigned before `completed` clears it.
+                // until the 30s expiry. Deliver the original now instead — it may still be a real
+                // message. One tick later, so `self.impl` is assigned before `completed` clears it.
                 Logger.shared.log("NotificationService \(episode)", "Payload rejected, completing without waiting for expiry")
                 queue.async {
                     completed()
@@ -2692,11 +2664,8 @@ final class NotificationService: UNNotificationServiceExtension {
             Logger.shared.log("NotificationService \(self.episode ?? "???")", "Completing due to serviceExtensionTimeWillExpire")
             
             if let content = self.content.with({ $0 }) {
-                let generated = content.generate()
-                contentHandler(generated)
-                if generated.threadIdentifier == emptyNotificationThreadId {
-                    self.removeDeliveredEmptyNotification()
-                }
+                // No room to defer here — the extension is already out of time.
+                contentHandler(content.generate())
             } else if let initialContent = self.initialContent {
                 contentHandler(initialContent)
             }
