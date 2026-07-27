@@ -18,8 +18,7 @@ and user control.**
 
 Fastgram is the Telegram experience you already know, with work of its own underneath. The
 project starts with a rebuilt video-message recording pipeline and grows from there — the
-direction is an independent iOS client built around performance, efficiency and user control,
-not a pile of extra features.
+direction is an independent iOS client built around performance, efficiency and user control.
 
 Fastgram is based on Telegram's open-source iOS client and uses the Telegram API. **It is not
 affiliated with or endorsed by Telegram** — report problems you see in Fastgram here, not to
