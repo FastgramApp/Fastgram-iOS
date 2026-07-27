@@ -12,22 +12,23 @@ The app is built using Bazel via the `Make.py` wrapper. There is no selective pe
 python3 build-system/Make/Make.py --overrideXcodeVersion \
  --cacheDir ~/telegram-bazel-cache \
  build \
- --configurationPath build-system/appstore-configuration.json \
- --gitCodesigningRepository git@gitlab.com:peter-iakovlev/fastlanematch.git \
+ --configurationPath build-system/fastgram-local-configuration.json \
+ --gitCodesigningRepository "$FASTGRAM_CODESIGNING_REPOSITORY" \
  --gitCodesigningType development --gitCodesigningUseCurrent --buildNumber=1 --configuration=debug_sim_arm64
 ```
 
+See [README.md](README.md) for how to create `fastgram-local-configuration.json` (it is git-ignored and holds your own API credentials). Simulator-only builds need no signing at all — drop the `--gitCodesigning*` flags and pass `--disableProvisioningProfiles`.
+
 Add `--continueOnError` after `build` (forwards to bazel's `--keep_going`) when verifying changes that may surface errors in many files at once — it lets the full set of errors land in one pass instead of stopping at the first failing target.
 
-The build needs `TELEGRAM_CODESIGNING_GIT_PASSWORD` in the environment. It is set in `~/.zshrc` but Claude Code's bash tool does NOT source shell config by default. Prefix build commands with `source ~/.zshrc 2>/dev/null;` to pick it up.
+When a private signing repository is used, the build needs `TELEGRAM_CODESIGNING_GIT_PASSWORD` in the environment. Non-interactive shells (including agent tool calls) usually do not source shell startup files, so export it explicitly for the build command.
 
 **Running tests.** `Make.py test` runs Bazel test targets (same config + codesigning as `build`, forced `debug_sim_arm64`). It accepts `--target <label>` (added 2026-06-19; default `Tests/AllTests`) so a single `ios_unit_test` can run in isolation, e.g.:
 
 ```sh
-source ~/.zshrc 2>/dev/null; python3 build-system/Make/Make.py --overrideXcodeVersion --cacheDir ~/telegram-bazel-cache \
- test --configurationPath build-system/appstore-configuration.json \
- --gitCodesigningRepository git@gitlab.com:peter-iakovlev/fastlanematch.git \
- --gitCodesigningType development --gitCodesigningUseCurrent --target //submodules/TextFormat:TextFormatTests
+python3 build-system/Make/Make.py --overrideXcodeVersion --cacheDir ~/telegram-bazel-cache \
+ test --configurationPath build-system/fastgram-local-configuration.json \
+ --disableProvisioningProfiles --target //submodules/TextFormat:TextFormatTests
 ```
 
 The first app-side `ios_unit_test` is `//submodules/TextFormat:TextFormatTests` (the mention/date link codecs). An `ios_unit_test` here needs an `ios_test_runner` pinned to a real device/OS (e.g. `iPhone 17` / `26.5`) — the default runner picks an invalid device and the test process exits 15. **Run new targets via `--target`, not the default suite:** `Tests/AllTests` currently references a dangling `//submodules/TgVoipWebrtc:TgCallsTests`, so the default would fail to build until that suite is repaired.
@@ -37,18 +38,18 @@ The first app-side `ios_unit_test` is `//submodules/TextFormat:TextFormatTests` 
 `simctl install` will NOT replace an already-installed app when the build number is unchanged (installd keeps a hard-link cache), so a rebuilt binary silently doesn't take effect. **Preferred fix: copy the whole freshly-built `.app` over the installed bundle in place.** This is more robust than swapping only the `Frameworks/TelegramUIFramework` binary (no risk of app↔framework version skew), and it preserves the account/login because the **data container is a separate path** (`.../data/Containers/Data/Application/<uuid>/`, keyed by bundle id) — only the **bundle** container is replaced, and the install-DB entry stays valid since the path + bundle id are unchanged.
 
 ```sh
-K3=FA6F7462-AA97-42FE-9E57-8DA0593CE756   # iPhone 17 Pro K3 (use the dedicated K-sims, not the shared default)
-BUNDLE=ph.telegra.Telegraph
+SIM="iPhone 17 Pro"                        # or a simulator UDID from `xcrun simctl list devices`
+BUNDLE=ph.telegra.Telegraph                # your configuration's bundle_id
 # Fresh build output (unzipped bundle, not the .ipa). `-L` is REQUIRED — `bazel-out` is a symlink,
 # so a plain `find bazel-out …` silently returns nothing:
 SRC="$(find -L bazel-out -maxdepth 14 -path '*/Telegram_archive-root/Payload/Telegram.app' -type d | head -1)"
-DEST="$(xcrun simctl get_app_container "$K3" "$BUNDLE" app)"   # installed bundle path
+DEST="$(xcrun simctl get_app_container "$SIM" "$BUNDLE" app)"  # installed bundle path
 # GUARD before the destructive rm: never rm the installed app unless SRC actually resolved,
 # or a failed cp leaves the sim with NO app installed (relaunch then fails).
 [ -x "$SRC/Telegram" ] || { echo "no fresh bundle at SRC=$SRC — aborting"; exit 1; }
-xcrun simctl terminate "$K3" "$BUNDLE" 2>/dev/null            # terminate before replacing the running binary
+xcrun simctl terminate "$SIM" "$BUNDLE" 2>/dev/null           # terminate before replacing the running binary
 rm -rf "$DEST" && cp -Rp "$SRC" "$DEST"                        # replace bundle in place; data container untouched
-xcrun simctl launch "$K3" "$BUNDLE"
+xcrun simctl launch "$SIM" "$BUNDLE"
 ```
 
 The sim ignores code signing, so the unsigned `Telegram_archive-root` bundle runs fine. Bazel stamps a reproducible `Jan 1 1980` mtime on the copied binary — that's expected, not a stale copy. The `Telegram_archive-root` is regenerated by the Make.py wrapper's post-build packaging; if it's stale/missing after an incremental build, unzip `Payload/Telegram.app` out of `bazel-bin/Telegram/Telegram.ipa` instead. (The older framework-only `cp` of `TelegramUIFramework` still works and is faster, but prefer the whole-`.app` copy to avoid version skew.)
@@ -73,11 +74,11 @@ A from-scratch WYSIWYG rich-text editor (`submodules/TelegramUI/Components/RichT
 
 ## Embedded watch app (`Telegram/WatchApp`)
 
-A standalone watchOS Telegram client (developed in the separate `~/build/tgwatch` repo) is vendored into this repo at `Telegram/WatchApp/` and can be embedded into the **device** IPA under `Telegram.app/Watch/`. It is built by `xcodebuild` (not Bazel) and codesigned by the Bazel build.
+A standalone watchOS Telegram client (developed in a separate `tgwatch` repository) is vendored into this repo at `Telegram/WatchApp/` and can be embedded into the **device** IPA under `Telegram.app/Watch/`. It is built by `xcodebuild` (not Bazel) and codesigned by the Bazel build.
 
 **Build it:** add `--embedWatchApp` to a Make.py **device** build (`--configuration=debug_arm64` or `release_arm64`) together with `--watchApiId`, `--watchApiHash`, `--watchSigningIdentity`, `--watchProvisioningProfile`. Off by default (it adds a ~4-min xcodebuild step); simulator builds never embed, and the default `debug_sim_arm64` build is unaffected.
 
-**`Telegram/WatchApp/` is a synced snapshot — do not hand-edit it.** The source of truth and dev tooling live in the `tgwatch` repo. To change the watch app, edit it there, then re-sync with `tgwatch/tools/export-sources.sh /abs/path/to/telegram-ios/Telegram/WatchApp` and commit the result. The committed `tgwatch.xcodeproj` is generated (kept via a `!tgwatch.xcodeproj` negation in `Telegram/WatchApp/.gitignore`, since the root `.gitignore` ignores `*.xcodeproj`); `.build`/`.swiftpm`/`xcuserdata` are excluded.
+**`Telegram/WatchApp/` is a synced snapshot — do not hand-edit it.** The source of truth and dev tooling live in the `tgwatch` repo. To change the watch app, edit it there, then re-sync with that repo's `tools/export-sources.sh /abs/path/to/Fastgram-iOS/Telegram/WatchApp` and commit the result. The committed `tgwatch.xcodeproj` is generated (kept via a `!tgwatch.xcodeproj` negation in `Telegram/WatchApp/.gitignore`, since the root `.gitignore` ignores `*.xcodeproj`); `.build`/`.swiftpm`/`xcuserdata` are excluded.
 
 **How it's wired:** `//Telegram:TelegramWatchApp` (rule in `Telegram/prebuilt_watchos.bzl`) runs in **two actions**: `PrebuiltWatchosCompile` (`Telegram/prebuilt_watchos_compile.sh`) runs xcodebuild on the snapshot in a writable temp copy with PLACEHOLDER version/api values (the bundle ids are baked from the snapshot's pbxproj/Info.plist — `ph.telegra.Telegraph.watchkitapp` / `ph.telegra.Telegraph`), emitting an unsigned `.app`; `PrebuiltWatchosPatchSign` (`Telegram/prebuilt_watchos_patch.sh`) then rewrites **six** per-build Info.plist keys (`CFBundleShortVersionString`, `CFBundleVersion`, `TG_API_ID`, `TG_API_HASH`, `CFBundleIdentifier`, `WKCompanionAppBundleIdentifier`) and codesigns the `.app` + nested `TDLibFramework.framework` (identity + the watchkitapp profile from `--define`s). The result feeds the `Telegram` `ios_application`'s `watch_application` slot (gated by the `//Telegram:embedWatchApp` flag). The rule takes `bundle_id` (set to `"{telegram_bundle_id}.watchkitapp"` in `Telegram/BUILD`) and derives the host bundle id by stripping the `.watchkitapp` suffix; both are passed to the patch worker as args (not action inputs), so the patch action re-runs when the host bundle id changes but the (expensive) compile stays cached. **The compile action's only inputs are the snapshot (+ its worker)** — so changing the version, build number, api id/hash, host bundle id, or signing identity re-runs only the cheap patch+sign action, not xcodebuild; xcodebuild re-runs only when the snapshot changes. This is correct because none of those values reach the compiled binary: each lands only in the Info.plist (via `$(...)` substitution and a runtime `Bundle.main.object(forInfoDictionaryKey:)` lookup in `Secrets.swift`, except for the bundle-id keys which only Info.plist consumers read).
 
@@ -120,7 +121,7 @@ A gradual migration is underway to eliminate direct `import Postbox` from consum
 
 **Historical record:** Wave-by-wave outcomes, the running tally of Postbox-free modules, the full wave-selection guidance, and the `TelegramEngine.Resources` facade inventory (also authoritatively defined in `submodules/TelegramCore/Sources/TelegramEngine/Resources/TelegramEngineResources.swift`) live in [`docs/superpowers/postbox-refactor-log.md`](docs/superpowers/postbox-refactor-log.md). Read that file when you need wave-specific context, a full worked example of a pattern, or the history of a particular module's migration.
 
-See the log for per-wave detail; the current wave count and the list of still-open migration opportunities live in the `project_postbox_refactor_next_wave.md` memory file.
+See the log for per-wave detail, the current wave count, and the list of still-open migration opportunities.
 
 ### Rules that apply to every wave
 

@@ -87,3 +87,6 @@ xcode-files
 tools/sim-watcher/dist/
 .mcp.json
 /build-system/fastgram-local-configuration.json
+# Local working notes for in-flight features; the durable docs live in docs/*.md
+/docs/superpowers/plans/
+/docs/superpowers/specs/

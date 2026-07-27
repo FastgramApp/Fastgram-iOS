@@ -1,0 +1,60 @@
+name: 🐞 Bug report
+description: Something in Fastgram doesn't work as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please fill this in as precisely as you can — reports without
+        reproduction steps usually can't be acted on.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched the existing issues and this isn't a duplicate
+          required: true
+        - label: This does **not** reproduce in the official Telegram for iOS app (otherwise it's an upstream bug)
+          required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Fastgram version / commit
+      placeholder: "1.0 (1234), or a commit hash if you built it yourself"
+    validations:
+      required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: Device and iOS version
+      placeholder: "iPhone 15 Pro, iOS 18.5"
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Screenshots, video or logs
+      description: Optional, but they help a lot. Redact anything private first.

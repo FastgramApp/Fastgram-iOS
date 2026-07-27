@@ -1,0 +1,29 @@
+name: 💡 Idea or feature request
+description: Suggest an improvement to Fastgram
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Fastgram is a fork with a narrow focus, so not every idea will fit — but suggestions are
+        welcome. Requests for features of the official Telegram app belong with Telegram.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the situation you run into, not just the feature you have in mind.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you've considered
