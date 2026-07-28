@@ -13,3 +13,6 @@ public struct NotificationsPresentationData: Codable, Equatable {
 public func notificationsPresentationDataPath(rootPath: String) -> String {
     return rootPath + "/notificationsPresentationData.json"
 }
+
+/// Tags the content-free notifications delivered for service pushes. See `legacyNotificationsFix`.
+public let emptyServiceNotificationThreadId = "empty-notification"

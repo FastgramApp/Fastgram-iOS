@@ -3,6 +3,7 @@ import SwiftSignalKit
 import Display
 import TelegramCore
 import UserNotifications
+import NotificationsPresentationData
 import Intents
 import Postbox
 import PushKit
@@ -1853,6 +1854,23 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
         return disposable
     }
 
+    /// ClearNotificationsManager cannot see these: it matches on the peer and message ids in a
+    /// notification's payload, which content-free service notifications do not carry.
+    private func clearEmptyServiceNotifications() {
+        UNUserNotificationCenter.current().getDeliveredNotifications(completionHandler: { notifications in
+            let identifiers = notifications.compactMap { notification -> String? in
+                if notification.request.content.threadIdentifier == emptyServiceNotificationThreadId {
+                    return notification.request.identifier
+                } else {
+                    return nil
+                }
+            }
+            if !identifiers.isEmpty {
+                UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: identifiers)
+            }
+        })
+    }
+
     private func resetBadge() {
         var resetOnce = true
         self.badgeDisposable.set((self.context.get()
@@ -1987,7 +2005,8 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
         self.isActivePromise.set(true)
 
         self.resetBadge()
-        
+        self.clearEmptyServiceNotifications()
+
         self.maybeCheckForUpdates()
         
         SharedDisplayLinkDriver.shared.updateForegroundState(self.isActiveValue)
