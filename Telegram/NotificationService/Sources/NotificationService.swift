@@ -29,13 +29,12 @@ private let queue = Queue()
 /// once the entitlement is granted.
 private let legacyNotificationsFix: Bool = true
 
-private let emptyNotificationThreadId = "empty-notification"
 private let emptyNotificationRemovalDelay: Double = 0.25
 
 @available(iOSApplicationExtension 10.0, iOS 10.0, *)
 private func deliveredEmptyNotificationIdentifiers(_ notifications: [UNNotification]) -> [String] {
     return notifications.compactMap { notification -> String? in
-        if notification.request.content.threadIdentifier == emptyNotificationThreadId {
+        if notification.request.content.threadIdentifier == emptyServiceNotificationThreadId {
             return notification.request.identifier
         } else {
             return nil
@@ -724,7 +723,7 @@ private struct NotificationContent: CustomStringConvertible {
             // A service push. It will be displayed regardless, so make it unobtrusive and tag it.
             content.title = " "
             content.sound = nil
-            content.threadIdentifier = emptyNotificationThreadId
+            content.threadIdentifier = emptyServiceNotificationThreadId
             if #available(iOSApplicationExtension 15.0, iOS 15.0, *) {
                 content.interruptionLevel = .passive
                 content.relevanceScore = 0.0
@@ -2621,7 +2620,7 @@ final class NotificationService: UNNotificationServiceExtension {
 
                 if let content = content.with({ $0 }) {
                     let generated = content.generate()
-                    if generated.threadIdentifier == emptyNotificationThreadId {
+                    if generated.threadIdentifier == emptyServiceNotificationThreadId {
                         strongSelf.deliverEmptyNotification(generated, using: contentHandler)
                     } else {
                         contentHandler(generated)
