@@ -23,10 +23,8 @@ import UniformTypeIdentifiers
 
 private let queue = Queue()
 
-/// Service pushes (read-state sync, deletions, badge updates) are delivered as alert pushes and
-/// answered with empty content, which the system only drops given the `usernotifications.filtering`
-/// entitlement. Without it, make them passive and silent and remove them again. Set to `false`
-/// once the entitlement is granted.
+/// Empty content is only dropped by the system given the `usernotifications.filtering`
+/// entitlement. Without it, make it passive and silent. Set to `false` once granted.
 private let legacyNotificationsFix: Bool = true
 
 private let emptyNotificationRemovalDelay: Double = 0.25
@@ -719,8 +717,10 @@ private struct NotificationContent: CustomStringConvertible {
             }
         }
 
-        if legacyNotificationsFix && content.title.isEmpty && content.subtitle.isEmpty && content.body.isEmpty && content.attachments.isEmpty {
-            // A service push. It will be displayed regardless, so make it unobtrusive and tag it.
+        if legacyNotificationsFix && content.title.isEmpty && content.subtitle.isEmpty && content.body.isEmpty {
+            // Nothing to display. Attachments go too: with no text the system discards the
+            // content and falls back to the server's "You have a new message".
+            content.attachments = []
             content.title = " "
             content.sound = nil
             content.threadIdentifier = emptyServiceNotificationThreadId
@@ -2589,8 +2589,7 @@ final class NotificationService: UNNotificationServiceExtension {
                 UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: identifiers)
             }
         })
-        // Deliberately not nested inside getDeliveredNotifications' completion: if that never
-        // fires the notification would never be delivered at all.
+        // Not nested in getDeliveredNotifications' completion: if that never fires, so be it.
         DispatchQueue.main.asyncAfter(deadline: .now() + emptyNotificationRemovalDelay, execute: {
             contentHandler(content)
         })
@@ -2644,9 +2643,8 @@ final class NotificationService: UNNotificationServiceExtension {
                 payload: request.content.userInfo
             )
             if handler == nil {
-                // A rejected payload never calls `completed`, leaving the notification to hang
-                // until the 30s expiry. Deliver the original now instead — it may still be a real
-                // message. One tick later, so `self.impl` is assigned before `completed` clears it.
+                // A rejected payload never calls `completed`; without this it hangs until the
+                // 30s expiry. One tick later, so `self.impl` is set before `completed` clears it.
                 Logger.shared.log("NotificationService \(episode)", "Payload rejected, completing without waiting for expiry")
                 queue.async {
                     completed()
