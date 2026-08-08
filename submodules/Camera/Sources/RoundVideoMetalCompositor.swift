@@ -4,14 +4,19 @@ import CoreVideo
 import CoreMedia
 import AVFoundation
 
-// Converts camera NV12 into a 400x400 round-video frame in one Metal pass without RGB.
-// Current limitations are hard-cut switching, synchronous rendering, and portrait iPhone only.
+// Converts and blends camera NV12 into a 400x400 round-video frame in one Metal pass.
+// Current limitations are synchronous rendering and portrait iPhone only.
 final class RoundVideoMetalCompositor {
     private struct Params {
         var inputWidth: UInt32
         var inputHeight: UInt32
+        var secondaryInputWidth: UInt32
+        var secondaryInputHeight: UInt32
         var outputSize: UInt32
         var isFront: UInt32
+        var secondaryIsFront: UInt32
+        var hasSecondary: UInt32
+        var secondaryMix: Float
     }
 
     // Compile once; instances keep only per-recording mutable resources.
@@ -71,7 +76,13 @@ final class RoundVideoMetalCompositor {
         self.outputPool = pool
     }
 
-    func render(pixelBuffer: CVPixelBuffer, isFront: Bool) -> CVPixelBuffer? {
+    func render(
+        pixelBuffer: CVPixelBuffer,
+        isFront: Bool,
+        secondaryPixelBuffer: CVPixelBuffer? = nil,
+        secondaryIsFront: Bool = false,
+        secondaryMix: Float = 0.0
+    ) -> CVPixelBuffer? {
         guard let textureCache = self.textureCache else {
             return nil
         }
@@ -81,6 +92,8 @@ final class RoundVideoMetalCompositor {
 
         let inputWidth = CVPixelBufferGetWidth(pixelBuffer)
         let inputHeight = CVPixelBufferGetHeight(pixelBuffer)
+        var secondaryInputWidth = inputWidth
+        var secondaryInputHeight = inputHeight
 
         var outputPixelBuffer: CVPixelBuffer?
         guard CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, self.outputPool, &outputPixelBuffer) == kCVReturnSuccess, let output = outputPixelBuffer else {
@@ -109,6 +122,20 @@ final class RoundVideoMetalCompositor {
             return nil
         }
 
+        var secondaryY = inputY
+        var secondaryCbCr = inputCbCr
+        var hasSecondary = false
+        if let secondaryPixelBuffer,
+           CVPixelBufferGetPixelFormatType(secondaryPixelBuffer) == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+           let textureY = self.planeTexture(secondaryPixelBuffer, textureCache, 0, .r8Unorm, &textureRefs),
+           let textureCbCr = self.planeTexture(secondaryPixelBuffer, textureCache, 1, .rg8Unorm, &textureRefs) {
+            secondaryY = textureY
+            secondaryCbCr = textureCbCr
+            secondaryInputWidth = CVPixelBufferGetWidth(secondaryPixelBuffer)
+            secondaryInputHeight = CVPixelBufferGetHeight(secondaryPixelBuffer)
+            hasSecondary = true
+        }
+
         guard let commandBuffer = self.commandQueue.makeCommandBuffer(), let encoder = commandBuffer.makeComputeCommandEncoder() else {
             return nil
         }
@@ -117,9 +144,21 @@ final class RoundVideoMetalCompositor {
         encoder.setComputePipelineState(self.pipelineState)
         encoder.setTexture(inputY, index: 0)
         encoder.setTexture(inputCbCr, index: 1)
-        encoder.setTexture(outputY, index: 2)
-        encoder.setTexture(outputCbCr, index: 3)
-        var params = Params(inputWidth: UInt32(inputWidth), inputHeight: UInt32(inputHeight), outputSize: UInt32(self.outputSize), isFront: isFront ? 1 : 0)
+        encoder.setTexture(secondaryY, index: 2)
+        encoder.setTexture(secondaryCbCr, index: 3)
+        encoder.setTexture(outputY, index: 4)
+        encoder.setTexture(outputCbCr, index: 5)
+        var params = Params(
+            inputWidth: UInt32(inputWidth),
+            inputHeight: UInt32(inputHeight),
+            secondaryInputWidth: UInt32(secondaryInputWidth),
+            secondaryInputHeight: UInt32(secondaryInputHeight),
+            outputSize: UInt32(self.outputSize),
+            isFront: isFront ? 1 : 0,
+            secondaryIsFront: secondaryIsFront ? 1 : 0,
+            hasSecondary: hasSecondary ? 1 : 0,
+            secondaryMix: min(1.0, max(0.0, secondaryMix))
+        )
         encoder.setBytes(&params, length: MemoryLayout<Params>.stride, index: 0)
 
         // One thread writes a 2x2 luma block and its shared chroma sample.
@@ -154,26 +193,31 @@ final class RoundVideoMetalCompositor {
     struct Params {
         uint inputWidth;
         uint inputHeight;
+        uint secondaryInputWidth;
+        uint secondaryInputHeight;
         uint outputSize;
         uint isFront;
+        uint secondaryIsFront;
+        uint hasSecondary;
+        float secondaryMix;
     };
 
     // Rotate the uncorrected capture buffer to portrait, mirror the front camera, and sample
     // its center square.
-    static float2 sourceCoord(float2 outCoord, constant Params& p) {
-        float outSize = float(p.outputSize);
+    static float2 sourceCoord(float2 outCoord, uint inputWidth, uint inputHeight, uint isFront, uint outputSize) {
+        float outSize = float(outputSize);
         float u = outCoord.x / outSize;
         float v = outCoord.y / outSize;
 
-        if (p.isFront != 0u) {
+        if (isFront != 0u) {
             u = 1.0 - u;
         }
 
         float ru = v;
         float rv = 1.0 - u;
 
-        float W = float(p.inputWidth);
-        float H = float(p.inputHeight);
+        float W = float(inputWidth);
+        float H = float(inputHeight);
         float su;
         float sv;
         if (W >= H) {
@@ -187,7 +231,8 @@ final class RoundVideoMetalCompositor {
     }
 
     // Use four taps above 1.5x decimation, where one bilinear tap visibly aliases.
-    static float3 sampleSource(float2 lumaCoord, bool multiTap, constant Params& p,
+    static float3 sampleSource(float2 lumaCoord, bool multiTap, uint inputWidth, uint inputHeight,
+                               uint isFront, uint outputSize,
                                texture2d<float, access::sample> inY,
                                texture2d<float, access::sample> inCbCr,
                                sampler s) {
@@ -196,7 +241,7 @@ final class RoundVideoMetalCompositor {
             for (int ty = 0; ty < 2; ty++) {
                 for (int tx = 0; tx < 2; tx++) {
                     float2 tapCoord = lumaCoord + float2(float(tx) - 0.5, float(ty) - 0.5) * 0.5;
-                    float2 src = sourceCoord(tapCoord, p);
+                    float2 src = sourceCoord(tapCoord, inputWidth, inputHeight, isFront, outputSize);
                     sum.x += inY.sample(s, src).r;
                     float2 cc = inCbCr.sample(s, src).rg;
                     sum.y += cc.x;
@@ -205,7 +250,7 @@ final class RoundVideoMetalCompositor {
             }
             return sum * 0.25;
         } else {
-            float2 src = sourceCoord(lumaCoord, p);
+            float2 src = sourceCoord(lumaCoord, inputWidth, inputHeight, isFront, outputSize);
             float2 cc = inCbCr.sample(s, src).rg;
             return float3(inY.sample(s, src).r, cc.x, cc.y);
         }
@@ -214,8 +259,10 @@ final class RoundVideoMetalCompositor {
     kernel void roundVideoComposite(
         texture2d<float, access::sample> inY [[texture(0)]],
         texture2d<float, access::sample> inCbCr [[texture(1)]],
-        texture2d<float, access::write> outY [[texture(2)]],
-        texture2d<float, access::write> outCbCr [[texture(3)]],
+        texture2d<float, access::sample> secondaryY [[texture(2)]],
+        texture2d<float, access::sample> secondaryCbCr [[texture(3)]],
+        texture2d<float, access::write> outY [[texture(4)]],
+        texture2d<float, access::write> outCbCr [[texture(5)]],
         constant Params& p [[buffer(0)]],
         uint2 gid [[thread_position_in_grid]]
     ) {
@@ -232,6 +279,7 @@ final class RoundVideoMetalCompositor {
         float2 center = float2(outSize * 0.5, outSize * 0.5);
 
         bool multiTap = (min(float(p.inputWidth), float(p.inputHeight)) / outSize) > 1.5;
+        bool secondaryMultiTap = (min(float(p.secondaryInputWidth), float(p.secondaryInputHeight)) / outSize) > 1.5;
 
         // White in video-range YUV.
         const float whiteY = 235.0 / 255.0;
@@ -252,7 +300,17 @@ final class RoundVideoMetalCompositor {
                     cbVal = whiteC;
                     crVal = whiteC;
                 } else {
-                    float3 yuv = sampleSource(lumaCoord, multiTap, p, inY, inCbCr, s);
+                    float3 yuv = sampleSource(
+                        lumaCoord, multiTap, p.inputWidth, p.inputHeight, p.isFront, p.outputSize,
+                        inY, inCbCr, s
+                    );
+                    if (p.hasSecondary != 0u && p.secondaryMix > 0.0) {
+                        float3 secondaryYuv = sampleSource(
+                            lumaCoord, secondaryMultiTap, p.secondaryInputWidth, p.secondaryInputHeight,
+                            p.secondaryIsFront, p.outputSize, secondaryY, secondaryCbCr, s
+                        );
+                        yuv = mix(yuv, secondaryYuv, p.secondaryMix);
+                    }
                     yVal = mix(yuv.x, whiteY, whiteMix);
                     cbVal = mix(yuv.y, whiteC, whiteMix);
                     crVal = mix(yuv.z, whiteC, whiteMix);

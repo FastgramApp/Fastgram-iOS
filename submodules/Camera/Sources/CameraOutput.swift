@@ -151,7 +151,8 @@ final class CameraOutput: NSObject {
             self.photoOutput.maxPhotoQualityPrioritization = .balanced
         }
         
-        self.videoOutput.alwaysDiscardsLateVideoFrames = false
+        // Keep optimized video messages real-time under compositor backpressure.
+        self.videoOutput.alwaysDiscardsLateVideoFrames = use32BGRA && Camera.roundVideoOptimizationsEnabled
         // The session switches this to NV12 only after the Metal pipeline is ready.
         self.videoOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey: use32BGRA ? kCVPixelFormatType_32BGRA : kCVPixelFormatType_420YpCbCr8BiPlanarFullRange] as [String : Any]
     }
@@ -401,6 +402,7 @@ final class CameraOutput: NSObject {
         
         self.currentMode = mode
         self.lastSampleTimestamp = nil
+        self.roundVideoSourceFrames.removeAll()
         self.captureOrientation = orientation
         
         var orientation = orientation
@@ -457,6 +459,9 @@ final class CameraOutput: NSObject {
             completion: { [weak self] result in
                 guard let self else {
                     return
+                }
+                self.videoQueue.async { [weak self] in
+                    self?.roundVideoSourceFrames.removeAll()
                 }
                 if let signpostID = self.benchmarkRunSignpostID {
                     os_signpost(.end, log: RoundVideoSignpost.log, name: "benchmarkRun", signpostID: signpostID)
@@ -552,6 +557,7 @@ final class CameraOutput: NSObject {
 
     private var lastSampleTimestamp: CMTime?
     private var emittedFirstFrameSignpost = false
+    private var lastDroppedSampleLogTimestamp: Double = 0.0
     
     private func roundVideoFormatDescription(for sourceFormatDescription: CMFormatDescription) -> CMFormatDescription? {
         if let entry = self.roundVideoFormatDescriptionCache.first(where: { CFEqual($0.sourceFormatDescription, sourceFormatDescription) }) {
@@ -635,18 +641,11 @@ final class CameraOutput: NSObject {
                     }
                 }
                 
-                var shouldProcess = (transitionFactor == 1.0 && fromAdditionalOutput)
+                let shouldProcess = (transitionFactor == 1.0 && fromAdditionalOutput)
                     || (transitionFactor == 0.0 && !fromAdditionalOutput)
                     || (transitionFactor > 0.0 && transitionFactor < 1.0)
-                var effectiveTransitionFactor = transitionFactor
-                if self.useMetalRoundVideoPipeline {
-                    // Metal hard-cuts at the midpoint to avoid interleaving both cameras.
-                    let useAdditional = transitionFactor >= 0.5
-                    shouldProcess = fromAdditionalOutput == useAdditional
-                    effectiveTransitionFactor = useAdditional ? 1.0 : 0.0
-                }
                 if shouldProcess {
-                    if let processedSampleBuffer = self.processRoundVideoSampleBuffer(sampleBuffer, additional: fromAdditionalOutput, transitionFactor: effectiveTransitionFactor) {
+                    if let processedSampleBuffer = self.processRoundVideoSampleBuffer(sampleBuffer, additional: fromAdditionalOutput, transitionFactor: transitionFactor) {
                         let presentationTime = CMSampleBufferGetPresentationTimeStamp(processedSampleBuffer)
                         // Reject equal timestamps while both streams overlap during a crossfade.
                         let shouldSkipTimestamp: Bool
@@ -728,7 +727,6 @@ final class CameraOutput: NSObject {
             self.semaphore.signal()
         }
 
-        // Metal hard-cuts, so transitionFactor applies only to legacy.
         if self.useMetalRoundVideoPipeline {
             guard let compositor = self.roundVideoMetalCompositor else {
                 return nil
@@ -751,7 +749,23 @@ final class CameraOutput: NSObject {
             }
             let renderSignpostID = OSSignpostID(log: RoundVideoSignpost.log)
             os_signpost(.begin, log: RoundVideoSignpost.log, name: "filterRender", signpostID: renderSignpostID)
-            let renderedPixelBuffer = compositor.render(pixelBuffer: videoPixelBuffer, isFront: additional)
+            self.roundVideoSourceFrames[additional] = videoPixelBuffer
+            let secondaryPixelBuffer: CVPixelBuffer?
+            let secondaryMix: Float
+            if transitionFactor > 0.0 && transitionFactor < 1.0 {
+                secondaryPixelBuffer = self.roundVideoSourceFrames[!additional]
+                secondaryMix = additional ? Float(1.0 - transitionFactor) : Float(transitionFactor)
+            } else {
+                secondaryPixelBuffer = nil
+                secondaryMix = 0.0
+            }
+            let renderedPixelBuffer = compositor.render(
+                pixelBuffer: videoPixelBuffer,
+                isFront: additional,
+                secondaryPixelBuffer: secondaryPixelBuffer,
+                secondaryIsFront: !additional,
+                secondaryMix: secondaryMix
+            )
             os_signpost(.end, log: RoundVideoSignpost.log, name: "filterRender", signpostID: renderSignpostID)
             // The compositor creates this from the first tagged output buffer.
             guard let metalPixelBuffer = renderedPixelBuffer, let metalFormatDescription = compositor.outputFormatDescription else {
@@ -831,6 +845,7 @@ final class CameraOutput: NSObject {
     
     private var currentPosition: Camera.Position = .front
     private var lastSwitchTimestamp: Double = 0.0
+    private var roundVideoSourceFrames: [Bool: CVPixelBuffer] = [:]
 
     func markPositionChange(position: Camera.Position) {
         // Capture the timestamp before dispatch so queue latency does not shift the transition.
@@ -896,7 +911,12 @@ extension CameraOutput: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureA
             os_signpost(.event, log: RoundVideoSignpost.log, name: "dropVideoFrame")
         }
         if #available(iOS 13.0, *) {
-            Logger.shared.log("Camera", "Dropped sample buffer \(sampleBuffer.attachments)")
+            let timestamp = CACurrentMediaTime()
+            // Avoid logging every expected overload drop.
+            if !self.isVideoMessage || timestamp - self.lastDroppedSampleLogTimestamp >= 1.0 {
+                self.lastDroppedSampleLogTimestamp = timestamp
+                Logger.shared.log("Camera", "Dropped sample buffer \(sampleBuffer.attachments)")
+            }
         }
     }
 }
