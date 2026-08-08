@@ -15,6 +15,9 @@ import DeviceProximity
 import MediaResources
 import PhotoResources
 import PeerMessagesMediaPlaylist
+import AvatarNode
+import LocalizedPeerData
+import TelegramStringFormatting
 
 enum SharedMediaPlayerGroup: Int {
     case music = 0
@@ -42,6 +45,57 @@ private struct GlobalControlOptions: OptionSet {
     static let next = GlobalControlOptions(rawValue: 1 << 3)
     static let playPause = GlobalControlOptions(rawValue: 1 << 4)
     static let seek = GlobalControlOptions(rawValue: 1 << 5)
+}
+
+private enum GlobalControlsArtwork: Equatable {
+    case albumArt(account: Account, value: SharedMediaPlaybackAlbumArt)
+    case avatar(account: Account, peer: EnginePeer)
+
+    static func ==(lhs: GlobalControlsArtwork, rhs: GlobalControlsArtwork) -> Bool {
+        switch (lhs, rhs) {
+        case let (.albumArt(lhsAccount, lhsValue), .albumArt(rhsAccount, rhsValue)):
+            return lhsAccount === rhsAccount && lhsValue == rhsValue
+        case let (.avatar(lhsAccount, lhsPeer), .avatar(rhsAccount, rhsPeer)):
+            return lhsAccount === rhsAccount && lhsPeer == rhsPeer
+        default:
+            return false
+        }
+    }
+}
+
+private let globalControlsArtworkSize = CGSize(width: 640.0, height: 640.0)
+private let globalControlsAvatarFont = avatarPlaceholderFont(size: floor(globalControlsArtworkSize.width * 16.0 / 37.0))
+
+private struct GlobalControlsMetadataKey: Equatable {
+    let account: ObjectIdentifier
+    let itemStableId: AnyHashable
+    let displayData: SharedMediaPlaybackDisplayData
+    let displayNamesOnLockscreen: Bool
+    let strings: ObjectIdentifier
+    let nameDisplayOrder: Int32
+    let dateTimeFormat: PresentationDateTimeFormat
+}
+
+private func supportsGlobalControls(type: MediaManagerPlayerType, state: SharedMediaPlayerItemPlaybackState) -> Bool {
+    switch type {
+    case .music:
+        return true
+    case .voice:
+        guard let playbackData = state.item.playbackData else {
+            return false
+        }
+        switch playbackData.type {
+        case .voice:
+            switch playbackData.source {
+            case let .telegramFile(_, _, isViewOnce):
+                return !isViewOnce
+            }
+        case .music, .instantVideo:
+            return false
+        }
+    case .file:
+        return false
+    }
 }
 
 public final class MediaManagerImpl: NSObject, MediaManager {
@@ -183,9 +237,10 @@ public final class MediaManagerImpl: NSObject, MediaManager {
     
     private let globalControlsDisposable = MetaDisposable()
     private let globalControlsArtworkDisposable = MetaDisposable()
-    private let globalControlsArtwork = Promise<(Account, SharedMediaPlaybackAlbumArt)?>(nil)
+    private let globalControlsArtwork = Promise<GlobalControlsArtwork?>(nil)
     private let globalControlsStatusDisposable = MetaDisposable()
     private let globalAudioSessionForegroundDisposable = MetaDisposable()
+    private var globalControlsPlayerType: MediaManagerPlayerType?
 
     private var musicListenTracker: MusicListenTracker?
     private let musicListenTrackingDisposable = MetaDisposable()
@@ -221,40 +276,63 @@ public final class MediaManagerImpl: NSObject, MediaManager {
         var baseNowPlayingInfo: [String: Any]?
         
         var previousState: SharedMediaPlayerItemPlaybackState?
-        var previousDisplayData: SharedMediaPlaybackDisplayData?
+        var previousMetadataKey: GlobalControlsMetadataKey?
+        var previousArtwork: GlobalControlsArtwork?
         let globalControlsArtwork = self.globalControlsArtwork
         let globalControlsStatus = self.globalControlsStatus
         
         var currentGlobalControlsOptions = GlobalControlOptions()
         
-        self.globalControlsDisposable.set((combineLatest(self.globalMediaPlayerState, self.presentationData)
-        |> deliverOnMainQueue).startStrict(next: { stateAndType, presentationData in
+        let displayNamesOnLockscreen = self.accountManager.sharedData(keys: [ApplicationSpecificSharedDataKeys.inAppNotificationSettings])
+        |> map { sharedData -> Bool in
+            let settings = sharedData.entries[ApplicationSpecificSharedDataKeys.inAppNotificationSettings]?.get(InAppNotificationSettings.self) ?? InAppNotificationSettings.defaultSettings
+            return settings.displayNameOnLockscreen
+        }
+        |> distinctUntilChanged
+
+        self.globalControlsDisposable.set((combineLatest(self.globalMediaPlayerState, self.presentationData, displayNamesOnLockscreen)
+        |> deliverOnMainQueue).startStrict(next: { stateAndType, presentationData, displayNamesOnLockscreen in
             var updatedGlobalControlOptions = GlobalControlOptions()
-            if let (_, stateOrLoading, type) = stateAndType, case let .state(state) = stateOrLoading {
+            var globalControlsPlayerType: MediaManagerPlayerType?
+            if let (_, stateOrLoading, type) = stateAndType, case let .state(state) = stateOrLoading, supportsGlobalControls(type: type, state: state) {
+                globalControlsPlayerType = type
+                updatedGlobalControlOptions.insert(.seek)
                 if type == .music {
                     updatedGlobalControlOptions.insert(.previous)
                     updatedGlobalControlOptions.insert(.next)
-                    updatedGlobalControlOptions.insert(.seek)
-                    switch state.status.status {
-                        case .playing, .buffering(_, true, _, _):
-                            updatedGlobalControlOptions.insert(.pause)
-                        default:
-                            updatedGlobalControlOptions.insert(.play)
-                    }
+                }
+                switch state.status.status {
+                case .playing, .buffering(_, true, _, _):
+                    updatedGlobalControlOptions.insert(.pause)
+                default:
+                    updatedGlobalControlOptions.insert(.play)
                 }
             }
+            self.globalControlsPlayerType = globalControlsPlayerType
             
-            if let (account, stateOrLoading, type) = stateAndType, type == .music, case let .state(state) = stateOrLoading, let displayData = state.item.displayData {
-                if previousDisplayData != displayData {
-                    previousDisplayData = displayData
+            if let (account, stateOrLoading, type) = stateAndType, case let .state(state) = stateOrLoading, supportsGlobalControls(type: type, state: state), let displayData = state.item.displayData {
+                let metadataKey = GlobalControlsMetadataKey(
+                    account: ObjectIdentifier(account),
+                    itemStableId: state.item.stableId,
+                    displayData: displayData,
+                    displayNamesOnLockscreen: displayNamesOnLockscreen,
+                    strings: ObjectIdentifier(presentationData.strings),
+                    nameDisplayOrder: presentationData.nameDisplayOrder.rawValue,
+                    dateTimeFormat: presentationData.dateTimeFormat
+                )
+                let metadataChanged = previousMetadataKey != metadataKey
+                if metadataChanged {
+                    previousMetadataKey = metadataKey
                     
                     var nowPlayingInfo: [String: Any] = [:]
                     
-                    var artwork: SharedMediaPlaybackAlbumArt?
+                    var artwork: GlobalControlsArtwork?
                     
                     switch displayData {
                         case let .music(title, performer, artworkValue, _, _):
-                            artwork = artworkValue
+                            if let artworkValue {
+                                artwork = .albumArt(account: account, value: artworkValue)
+                            }
                             
                             let titleText: String = title ?? presentationData.strings.MediaPlayer_UnknownTrack
                             let subtitleText: String = performer ?? presentationData.strings.MediaPlayer_UnknownArtist
@@ -262,29 +340,50 @@ public final class MediaManagerImpl: NSObject, MediaManager {
                             nowPlayingInfo[MPMediaItemPropertyTitle] = titleText
                             nowPlayingInfo[MPMediaItemPropertyArtist] = subtitleText
                         case let .voice(author, _):
-                            let titleText: String = author?.debugDisplayTitle ?? ""
-                            
-                            nowPlayingInfo[MPMediaItemPropertyTitle] = titleText
+                            let voiceMessageText = presentationData.strings.VoiceOver_Chat_VoiceMessage
+                            if displayNamesOnLockscreen, let author {
+                                let subtitleText: String
+                                if let item = state.item as? MessageMediaPlaylistItem {
+                                    let timestampText = stringForPreciseRelativeTimestamp(strings: presentationData.strings, relativeTimestamp: item.message.timestamp, relativeTo: Int32(Date().timeIntervalSince1970), dateTimeFormat: presentationData.dateTimeFormat)
+                                    subtitleText = "\(voiceMessageText) · \(timestampText)"
+                                } else {
+                                    subtitleText = voiceMessageText
+                                }
+                                nowPlayingInfo[MPMediaItemPropertyTitle] = author.displayTitle(strings: presentationData.strings, displayOrder: presentationData.nameDisplayOrder)
+                                nowPlayingInfo[MPMediaItemPropertyArtist] = subtitleText
+                                artwork = .avatar(account: account, peer: author)
+                            } else {
+                                nowPlayingInfo[MPMediaItemPropertyTitle] = voiceMessageText
+                            }
+                            nowPlayingInfo[MPNowPlayingInfoPropertyMediaType] = NSNumber(value: MPNowPlayingInfoMediaType.audio.rawValue)
+                            if #available(iOSApplicationExtension 18.0, iOS 18.0, *) {
+                                nowPlayingInfo[MPNowPlayingInfoPropertyExcludeFromSuggestions] = true
+                            }
                         case let .instantVideo(author, _, _):
                             let titleText: String = author?.debugDisplayTitle ?? ""
                             
                             nowPlayingInfo[MPMediaItemPropertyTitle] = titleText
                     }
                     
-                    globalControlsArtwork.set(.single(artwork.flatMap({ (account, $0) })))
+                    if artwork == previousArtwork, let currentArtwork = baseNowPlayingInfo?[MPMediaItemPropertyArtwork] {
+                        nowPlayingInfo[MPMediaItemPropertyArtwork] = currentArtwork
+                    }
+                    previousArtwork = artwork
                     
                     baseNowPlayingInfo = nowPlayingInfo
-                    
                     MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
+
+                    globalControlsArtwork.set(.single(artwork))
                 }
                 
-                if previousState != state {
+                if metadataChanged || previousState != state {
                     previousState = state
                     globalControlsStatus.set(.single(state.status))
                 }
             } else {
                 previousState = nil
-                previousDisplayData = nil
+                previousMetadataKey = nil
+                previousArtwork = nil
                 globalControlsStatus.set(.single(nil))
                 globalControlsArtwork.set(.single(nil))
                 
@@ -327,16 +426,20 @@ public final class MediaManagerImpl: NSObject, MediaManager {
         }))
         
         self.globalControlsArtworkDisposable.set((self.globalControlsArtwork.get()
-        |> distinctUntilChanged(isEqual: { $0?.0 === $1?.0 && $0?.1 == $1?.1 })
+        |> distinctUntilChanged
         |> mapToSignal { value -> Signal<UIImage?, NoError> in
-            if let (account, value) = value {
+            guard let value else {
+                return .single(nil)
+            }
+            switch value {
+            case let .albumArt(account, value):
                 return playerAlbumArt(engine: TelegramEngine(account: account), fileReference: value.fullSizeResource.file, albumArt: value, thumbnail: false)
                 |> map { generator -> UIImage? in
-                    let arguments = TransformImageArguments(corners: ImageCorners(), imageSize: CGSize(width: 640, height: 640), boundingSize: CGSize(width: 640, height: 640), intrinsicInsets: .zero)
+                    let arguments = TransformImageArguments(corners: ImageCorners(), imageSize: globalControlsArtworkSize, boundingSize: globalControlsArtworkSize, intrinsicInsets: .zero)
                     return generator(arguments)?.generateImage()
                 }
-            } else {
-                return .single(nil)
+            case let .avatar(account, peer):
+                return peerAvatarCompleteImage(account: account, peer: peer, size: globalControlsArtworkSize, round: true, font: globalControlsAvatarFont, drawLetters: true, fullSize: true)
             }
         } |> deliverOnMainQueue).startStrict(next: { image in
             if var nowPlayingInfo = baseNowPlayingInfo {
@@ -363,13 +466,17 @@ public final class MediaManagerImpl: NSObject, MediaManager {
                     nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = next.duration as NSNumber
                     switch next.status {
                         case .playing:
-                            nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = 1.0 as NSNumber
-                        case .buffering, .paused:
+                            nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = next.baseRate as NSNumber
+                        case let .buffering(_, whilePlaying, _, _):
+                            nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = (whilePlaying ? next.baseRate : 0.0) as NSNumber
+                        case .paused:
                             nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = 0.0 as NSNumber
                     }
+                    nowPlayingInfo[MPNowPlayingInfoPropertyDefaultPlaybackRate] = next.baseRate as NSNumber
                     nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = next.timestamp as NSNumber
                     
                     MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
+                    baseNowPlayingInfo = nowPlayingInfo
                 }
             }
         }))
@@ -655,37 +762,55 @@ public final class MediaManagerImpl: NSObject, MediaManager {
     }
     
     @objc func playCommandEvent(_ command: AnyObject) -> MPRemoteCommandHandlerStatus {
-        self.playlistControl(.playback(.play), type: nil)
+        guard let type = self.globalControlsPlayerType else {
+            return .noActionableNowPlayingItem
+        }
+        self.playlistControl(.playback(.play), type: type)
         
         return .success
     }
     
     @objc func pauseCommandEvent(_ command: AnyObject) -> MPRemoteCommandHandlerStatus {
-        self.playlistControl(.playback(.pause), type: nil)
+        guard let type = self.globalControlsPlayerType else {
+            return .noActionableNowPlayingItem
+        }
+        self.playlistControl(.playback(.pause), type: type)
         
         return .success
     }
     
     @objc func previousTrackCommandEvent(_ command: AnyObject) -> MPRemoteCommandHandlerStatus {
-        self.playlistControl(.previous, type: nil)
+        guard let type = self.globalControlsPlayerType else {
+            return .noActionableNowPlayingItem
+        }
+        self.playlistControl(.previous, type: type)
         
         return .success
     }
     
     @objc func nextTrackCommandEvent(_ command: AnyObject) -> MPRemoteCommandHandlerStatus {
-        self.playlistControl(.next, type: nil)
+        guard let type = self.globalControlsPlayerType else {
+            return .noActionableNowPlayingItem
+        }
+        self.playlistControl(.next, type: type)
         
         return .success
     }
     
     @objc func togglePlayPauseCommandEvent(_ command: AnyObject) -> MPRemoteCommandHandlerStatus {
-        self.playlistControl(.playback(.togglePlayPause), type: nil)
+        guard let type = self.globalControlsPlayerType else {
+            return .noActionableNowPlayingItem
+        }
+        self.playlistControl(.playback(.togglePlayPause), type: type)
         
         return .success
     }
     
     @objc func changePlaybackPositionCommandEvent(_ event: MPChangePlaybackPositionCommandEvent) -> MPRemoteCommandHandlerStatus {
-        self.playlistControl(.seek(event.positionTime), type: nil)
+        guard let type = self.globalControlsPlayerType else {
+            return .noActionableNowPlayingItem
+        }
+        self.playlistControl(.seek(event.positionTime), type: type)
         
         return .success
     }
