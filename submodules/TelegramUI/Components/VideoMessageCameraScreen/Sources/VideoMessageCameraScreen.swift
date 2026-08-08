@@ -957,7 +957,17 @@ public class VideoMessageCameraScreen: ViewController {
             self.previewContainerContentView = UIView()
             self.previewContainerContentView.clipsToBounds = true
             self.previewContainerView.addSubview(self.previewContainerContentView)
-                        
+
+            // MultiCam policy depends on the selected round-video mode.
+            let experimentalSettings = self.context.sharedContext.immediateExperimentalUISettings
+            switch experimentalSettings.roundVideoBenchmarkMode {
+            case 1:
+                Camera.roundVideoBenchmarkMode = Camera.isIpad ? .vanilla : .optimizedCurrentResolution
+            case 2:
+                Camera.roundVideoBenchmarkMode = Camera.isIpad ? .vanilla : .optimized640x480
+            default:
+                Camera.roundVideoBenchmarkMode = .vanilla
+            }
             let isDualCameraEnabled = Camera.isDualCameraSupported(forRoundVideo: true)
             let isFrontPosition = "".isEmpty
             
@@ -1078,16 +1088,6 @@ public class VideoMessageCameraScreen: ViewController {
                 return
             }
 
-            // The mode is fixed for the camera session; reopen this screen after changing it.
-            let experimentalSettings = self.context.sharedContext.immediateExperimentalUISettings
-            switch experimentalSettings.roundVideoBenchmarkMode {
-            case 1:
-                Camera.roundVideoBenchmarkMode = Camera.isIpad ? .vanilla : .optimizedCurrentResolution
-            case 2:
-                Camera.roundVideoBenchmarkMode = Camera.isIpad ? .vanilla : .optimized640x480
-            default:
-                Camera.roundVideoBenchmarkMode = .vanilla
-            }
             let camera = Camera(
                 configuration: Camera.Configuration(
                     preset: .hd1920x1080,
