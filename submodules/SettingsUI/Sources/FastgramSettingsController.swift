@@ -10,7 +10,7 @@ import AccountContext
 
 private final class FastgramSettingsControllerArguments {
     let updateRoundVideoMode: (Int32) -> Void
-    
+
     init(updateRoundVideoMode: @escaping (Int32) -> Void) {
         self.updateRoundVideoMode = updateRoundVideoMode
     }
@@ -25,11 +25,11 @@ private enum FastgramSettingsEntry: ItemListNodeEntry {
     case optimized(PresentationTheme, String, Bool)
     case original(PresentationTheme, String, Bool)
     case videoMessagesInfo(PresentationTheme, String)
-    
+
     var section: ItemListSectionId {
         return FastgramSettingsSection.videoMessages.rawValue
     }
-    
+
     var stableId: Int32 {
         switch self {
         case .videoMessagesHeader:
@@ -42,7 +42,7 @@ private enum FastgramSettingsEntry: ItemListNodeEntry {
             return 3
         }
     }
-    
+
     static func ==(lhs: FastgramSettingsEntry, rhs: FastgramSettingsEntry) -> Bool {
         switch lhs {
         case let .videoMessagesHeader(lhsTheme, lhsText):
@@ -64,11 +64,11 @@ private enum FastgramSettingsEntry: ItemListNodeEntry {
         }
         return false
     }
-    
+
     static func <(lhs: FastgramSettingsEntry, rhs: FastgramSettingsEntry) -> Bool {
         return lhs.stableId < rhs.stableId
     }
-    
+
     func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {
         let arguments = arguments as! FastgramSettingsControllerArguments
         switch self {
@@ -103,11 +103,12 @@ public func fastgramSettingsController(context: AccountContext) -> ViewControlle
             transaction.updateSharedData(ApplicationSpecificSharedDataKeys.experimentalUISettings, { entry in
                 var settings = entry?.get(ExperimentalUISettings.self) ?? ExperimentalUISettings.defaultSettings
                 settings.roundVideoBenchmarkMode = value
+                settings.useModernVideoMessagePipeline = false
                 return EnginePreferencesEntry(settings)
             })
         }.start()
     })
-    
+
     let signal = combineLatest(
         context.sharedContext.presentationData,
         context.sharedContext.accountManager.sharedData(keys: Set([
@@ -117,7 +118,7 @@ public func fastgramSettingsController(context: AccountContext) -> ViewControlle
     |> deliverOnMainQueue
     |> map { presentationData, sharedData -> (ItemListControllerState, (ItemListNodeState, Any)) in
         let settings = sharedData.entries[ApplicationSpecificSharedDataKeys.experimentalUISettings]?.get(ExperimentalUISettings.self) ?? ExperimentalUISettings.defaultSettings
-        
+
         let controllerState = ItemListControllerState(
             presentationData: ItemListPresentationData(presentationData),
             title: .text(presentationData.strings.FastgramSettings_Title),
@@ -133,6 +134,6 @@ public func fastgramSettingsController(context: AccountContext) -> ViewControlle
         )
         return (controllerState, (listState, arguments))
     }
-    
+
     return ItemListController(context: context, state: signal)
 }

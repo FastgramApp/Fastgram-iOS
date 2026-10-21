@@ -8,23 +8,23 @@ public struct ExperimentalUISettings: Codable, Equatable {
             public var key: MessageReaction.Reaction
             public var messageId: EngineMessage.Id
             public var mediaId: EngineMedia.Id
-            
+
             public init(key: MessageReaction.Reaction, messageId: EngineMessage.Id, mediaId: EngineMedia.Id) {
                 self.key = key
                 self.messageId = messageId
                 self.mediaId = mediaId
             }
         }
-        
+
         public var accountId: Int64
         public var items: [Item]
-        
+
         public init(accountId: Int64, items: [Item]) {
             self.accountId = accountId
             self.items = items
         }
     }
-    
+
     public var keepChatNavigationStack: Bool
     public var skipReadHistory: Bool
     public var alwaysDisplayTyping: Bool
@@ -32,7 +32,6 @@ public struct ExperimentalUISettings: Codable, Equatable {
     public var chatListPhotos: Bool
     public var knockoutWallpaper: Bool
     public var foldersTabAtBottom: Bool
-    public var preferredVideoCodec: String?
     public var disableVideoAspectScaling: Bool
     public var enableVoipTcp: Bool
     public var experimentalCompatibility: Bool
@@ -55,6 +54,10 @@ public struct ExperimentalUISettings: Codable, Equatable {
     public var dustEffect: Bool
     public var disableCallV2: Bool
     public var experimentalCallMute: Bool
+    // Group calls: use the PeerConnection-based GroupInstanceReferenceImpl instead of
+    // GroupInstanceCustomImpl (the ios_calls_group_reference_impl app-config flag can
+    // also turn it on; live streams always use the custom engine).
+    public var groupCallReferenceEngine: Bool
     public var allowWebViewInspection: Bool
     public var disableReloginTokens: Bool
     public var liveStreamV2: Bool
@@ -74,7 +77,12 @@ public struct ExperimentalUISettings: Codable, Equatable {
     public var debugRipple: Bool
     public var forceNewTextInput: Bool
     public var roundVideoBenchmarkMode: Int32
-    
+
+    public var coreListChatBackend: Bool
+    public var forceRLottieBackend: Bool
+    public var respectSystemMicrophone: Bool
+    public var useModernVideoMessagePipeline: Bool?
+
     public static var defaultSettings: ExperimentalUISettings {
         return ExperimentalUISettings(
             keepChatNavigationStack: false,
@@ -84,7 +92,6 @@ public struct ExperimentalUISettings: Codable, Equatable {
             chatListPhotos: false,
             knockoutWallpaper: false,
             foldersTabAtBottom: false,
-            preferredVideoCodec: nil,
             disableVideoAspectScaling: false,
             enableVoipTcp: false,
             experimentalCompatibility: false,
@@ -107,6 +114,7 @@ public struct ExperimentalUISettings: Codable, Equatable {
             dustEffect: false,
             disableCallV2: false,
             experimentalCallMute: false,
+            groupCallReferenceEngine: false,
             allowWebViewInspection: false,
             disableReloginTokens: false,
             liveStreamV2: false,
@@ -125,10 +133,14 @@ public struct ExperimentalUISettings: Codable, Equatable {
             forceClearGlass: false,
             debugRipple: false,
             forceNewTextInput: false,
-            roundVideoBenchmarkMode: 1
+            roundVideoBenchmarkMode: 1,
+            coreListChatBackend: false,
+            forceRLottieBackend: false,
+            respectSystemMicrophone: false,
+            useModernVideoMessagePipeline: nil
         )
     }
-    
+
     public init(
         keepChatNavigationStack: Bool,
         skipReadHistory: Bool,
@@ -137,7 +149,6 @@ public struct ExperimentalUISettings: Codable, Equatable {
         chatListPhotos: Bool,
         knockoutWallpaper: Bool,
         foldersTabAtBottom: Bool,
-        preferredVideoCodec: String?,
         disableVideoAspectScaling: Bool,
         enableVoipTcp: Bool,
         experimentalCompatibility: Bool,
@@ -160,6 +171,7 @@ public struct ExperimentalUISettings: Codable, Equatable {
         dustEffect: Bool,
         disableCallV2: Bool,
         experimentalCallMute: Bool,
+        groupCallReferenceEngine: Bool,
         allowWebViewInspection: Bool,
         disableReloginTokens: Bool,
         liveStreamV2: Bool,
@@ -178,7 +190,11 @@ public struct ExperimentalUISettings: Codable, Equatable {
         forceClearGlass: Bool,
         debugRipple: Bool,
         forceNewTextInput: Bool,
-        roundVideoBenchmarkMode: Int32
+        roundVideoBenchmarkMode: Int32 = 1,
+        coreListChatBackend: Bool,
+        forceRLottieBackend: Bool,
+        respectSystemMicrophone: Bool,
+        useModernVideoMessagePipeline: Bool? = nil
     ) {
         self.keepChatNavigationStack = keepChatNavigationStack
         self.skipReadHistory = skipReadHistory
@@ -187,7 +203,6 @@ public struct ExperimentalUISettings: Codable, Equatable {
         self.chatListPhotos = chatListPhotos
         self.knockoutWallpaper = knockoutWallpaper
         self.foldersTabAtBottom = foldersTabAtBottom
-        self.preferredVideoCodec = preferredVideoCodec
         self.disableVideoAspectScaling = disableVideoAspectScaling
         self.enableVoipTcp = enableVoipTcp
         self.experimentalCompatibility = experimentalCompatibility
@@ -210,6 +225,7 @@ public struct ExperimentalUISettings: Codable, Equatable {
         self.dustEffect = dustEffect
         self.disableCallV2 = disableCallV2
         self.experimentalCallMute = experimentalCallMute
+        self.groupCallReferenceEngine = groupCallReferenceEngine
         self.allowWebViewInspection = allowWebViewInspection
         self.disableReloginTokens = disableReloginTokens
         self.liveStreamV2 = liveStreamV2
@@ -229,6 +245,10 @@ public struct ExperimentalUISettings: Codable, Equatable {
         self.debugRipple = debugRipple
         self.forceNewTextInput = forceNewTextInput
         self.roundVideoBenchmarkMode = roundVideoBenchmarkMode
+        self.coreListChatBackend = coreListChatBackend
+        self.forceRLottieBackend = forceRLottieBackend
+        self.respectSystemMicrophone = respectSystemMicrophone
+        self.useModernVideoMessagePipeline = useModernVideoMessagePipeline
     }
 
     public init(from decoder: Decoder) throws {
@@ -241,7 +261,6 @@ public struct ExperimentalUISettings: Codable, Equatable {
         self.chatListPhotos = (try container.decodeIfPresent(Int32.self, forKey: "chatListPhotos") ?? 0) != 0
         self.knockoutWallpaper = (try container.decodeIfPresent(Int32.self, forKey: "knockoutWallpaper") ?? 0) != 0
         self.foldersTabAtBottom = (try container.decodeIfPresent(Int32.self, forKey: "foldersTabAtBottom") ?? 0) != 0
-        self.preferredVideoCodec = try container.decodeIfPresent(String.self.self, forKey: "preferredVideoCodec")
         self.disableVideoAspectScaling = (try container.decodeIfPresent(Int32.self, forKey: "disableVideoAspectScaling") ?? 0) != 0
         self.enableVoipTcp = (try container.decodeIfPresent(Int32.self, forKey: "enableVoipTcp") ?? 0) != 0
         self.experimentalCompatibility = (try container.decodeIfPresent(Int32.self, forKey: "experimentalCompatibility") ?? 0) != 0
@@ -264,6 +283,7 @@ public struct ExperimentalUISettings: Codable, Equatable {
         self.dustEffect = try container.decodeIfPresent(Bool.self, forKey: "dustEffect") ?? false
         self.disableCallV2 = try container.decodeIfPresent(Bool.self, forKey: "disableCallV2") ?? false
         self.experimentalCallMute = try container.decodeIfPresent(Bool.self, forKey: "experimentalCallMute") ?? false
+        self.groupCallReferenceEngine = try container.decodeIfPresent(Bool.self, forKey: "groupCallReferenceEngine") ?? false
         self.allowWebViewInspection = try container.decodeIfPresent(Bool.self, forKey: "allowWebViewInspection") ?? false
         self.disableReloginTokens = try container.decodeIfPresent(Bool.self, forKey: "disableReloginTokens") ?? false
         self.liveStreamV2 = try container.decodeIfPresent(Bool.self, forKey: "liveStreamV2") ?? false
@@ -283,8 +303,12 @@ public struct ExperimentalUISettings: Codable, Equatable {
         self.debugRipple = try container.decodeIfPresent(Bool.self, forKey: "debugRipple") ?? false
         self.forceNewTextInput = try container.decodeIfPresent(Bool.self, forKey: "forceNewTextInput") ?? false
         self.roundVideoBenchmarkMode = try container.decodeIfPresent(Int32.self, forKey: "roundVideoBenchmarkMode") ?? 1
+        self.coreListChatBackend = try container.decodeIfPresent(Bool.self, forKey: "coreListChatBackend") ?? false
+        self.forceRLottieBackend = try container.decodeIfPresent(Bool.self, forKey: "forceRLottieBackend") ?? false
+        self.respectSystemMicrophone = try container.decodeIfPresent(Bool.self, forKey: "respectSystemMicrophone") ?? false
+        self.useModernVideoMessagePipeline = try container.decodeIfPresent(Bool.self, forKey: "useModernVideoMessagePipeline")
     }
-    
+
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: StringCodingKey.self)
 
@@ -295,7 +319,6 @@ public struct ExperimentalUISettings: Codable, Equatable {
         try container.encode((self.chatListPhotos ? 1 : 0) as Int32, forKey: "chatListPhotos")
         try container.encode((self.knockoutWallpaper ? 1 : 0) as Int32, forKey: "knockoutWallpaper")
         try container.encode((self.foldersTabAtBottom ? 1 : 0) as Int32, forKey: "foldersTabAtBottom")
-        try container.encodeIfPresent(self.preferredVideoCodec, forKey: "preferredVideoCodec")
         try container.encode((self.disableVideoAspectScaling ? 1 : 0) as Int32, forKey: "disableVideoAspectScaling")
         try container.encode((self.enableVoipTcp ? 1 : 0) as Int32, forKey: "enableVoipTcp")
         try container.encode((self.experimentalCompatibility ? 1 : 0) as Int32, forKey: "experimentalCompatibility")
@@ -318,6 +341,7 @@ public struct ExperimentalUISettings: Codable, Equatable {
         try container.encode(self.dustEffect, forKey: "dustEffect")
         try container.encode(self.disableCallV2, forKey: "disableCallV2")
         try container.encode(self.experimentalCallMute, forKey: "experimentalCallMute")
+        try container.encode(self.groupCallReferenceEngine, forKey: "groupCallReferenceEngine")
         try container.encode(self.allowWebViewInspection, forKey: "allowWebViewInspection")
         try container.encode(self.disableReloginTokens, forKey: "disableReloginTokens")
         try container.encode(self.liveStreamV2, forKey: "liveStreamV2")
@@ -337,6 +361,10 @@ public struct ExperimentalUISettings: Codable, Equatable {
         try container.encodeIfPresent(self.debugRipple, forKey: "debugRipple")
         try container.encodeIfPresent(self.forceNewTextInput, forKey: "forceNewTextInput")
         try container.encodeIfPresent(self.roundVideoBenchmarkMode, forKey: "roundVideoBenchmarkMode")
+        try container.encodeIfPresent(self.coreListChatBackend, forKey: "coreListChatBackend")
+        try container.encodeIfPresent(self.forceRLottieBackend, forKey: "forceRLottieBackend")
+        try container.encodeIfPresent(self.respectSystemMicrophone, forKey: "respectSystemMicrophone")
+        try container.encodeIfPresent(self.useModernVideoMessagePipeline, forKey: "useModernVideoMessagePipeline")
     }
 }
 
