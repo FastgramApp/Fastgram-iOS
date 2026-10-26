@@ -17,7 +17,7 @@
 			<string>INStartAudioCallIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Патэлефануй Аляксею праз Fastgram</string>
+				<string>Патэлефануй Алісе праз Fastgram</string>
 			</array>
 		</dict>
 		<dict>
@@ -25,7 +25,7 @@
 			<string>INSearchForMessagesIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Знайдзі паведамленні ад Аляксея ў Fastgram</string>
+				<string>Прачытай мае непрачытаныя паведамленні ў Fastgram</string>
 			</array>
 		</dict>
 		<dict>
@@ -33,7 +33,7 @@
 			<string>INSetMessageAttributeIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Пазнач апошняе паведамленне ад Аляксея як прачытанае ў Fastgram</string>
+				<string>Пазнач мае паведамленні ў Fastgram як прачытаныя</string>
 			</array>
 		</dict>
 		<dict>
@@ -41,7 +41,7 @@
 			<string>INSearchCallHistoryIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Пакажы мае апошнія званкі ў Fastgram</string>
+				<string>Пакажы мае прапушчаныя выклікі ў Fastgram</string>
 			</array>
 		</dict>
 	</array>

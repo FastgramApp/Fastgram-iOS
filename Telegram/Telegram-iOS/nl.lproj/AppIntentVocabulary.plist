@@ -17,7 +17,7 @@
 			<string>INStartAudioCallIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Bel Maartje met Fastgram</string>
+				<string>Bel Maartje via Fastgram</string>
 			</array>
 		</dict>
 		<dict>
@@ -25,7 +25,7 @@
 			<string>INSearchForMessagesIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Zoek berichten van Maartje in Fastgram</string>
+				<string>Lees mijn ongelezen berichten in Fastgram voor</string>
 			</array>
 		</dict>
 		<dict>
@@ -33,7 +33,7 @@
 			<string>INSetMessageAttributeIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Markeer het laatste bericht van Maartje als gelezen in Fastgram</string>
+				<string>Markeer mijn berichten in Fastgram als gelezen</string>
 			</array>
 		</dict>
 		<dict>
@@ -41,7 +41,7 @@
 			<string>INSearchCallHistoryIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Toon mijn recente Fastgram-oproepen</string>
+				<string>Toon mijn gemiste oproepen in Fastgram</string>
 			</array>
 		</dict>
 	</array>

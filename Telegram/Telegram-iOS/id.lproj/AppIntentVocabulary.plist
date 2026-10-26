@@ -17,7 +17,7 @@
 			<string>INStartAudioCallIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Telepon Alex menggunakan Fastgram</string>
+				<string>Telepon Alice lewat Fastgram</string>
 			</array>
 		</dict>
 		<dict>
@@ -25,7 +25,7 @@
 			<string>INSearchForMessagesIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Cari pesan dari Alex di Fastgram</string>
+				<string>Bacakan pesan saya yang belum dibaca di Fastgram</string>
 			</array>
 		</dict>
 		<dict>
@@ -33,7 +33,7 @@
 			<string>INSetMessageAttributeIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Tandai pesan terakhir dari Alex sebagai sudah dibaca di Fastgram</string>
+				<string>Tandai pesan saya di Fastgram sebagai sudah dibaca</string>
 			</array>
 		</dict>
 		<dict>
@@ -41,7 +41,7 @@
 			<string>INSearchCallHistoryIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Tampilkan panggilan Fastgram terbaru saya</string>
+				<string>Tampilkan panggilan tak terjawab saya di Fastgram</string>
 			</array>
 		</dict>
 	</array>
