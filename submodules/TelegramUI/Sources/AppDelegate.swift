@@ -16,6 +16,7 @@ import BuildConfig
 import BuildConfigExtra
 import DeviceCheck
 import AccountContext
+import CarPlay
 import OverlayStatusController
 import UndoUI
 import LegacyUI
@@ -257,6 +258,16 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
     let hasActiveAudioSession = Promise<Bool>(false)
     
     private let sharedContextPromise = Promise<SharedApplicationContext>()
+    private let carPlayInForeground = ValuePromise<Bool>(false, ignoreRepeated: true)
+
+    var carPlaySharedContext: Signal<SharedAccountContextImpl, NoError> {
+        return self.sharedContextPromise.get()
+        |> map { $0.sharedContext }
+    }
+
+    func setCarPlayInForeground(_ value: Bool) {
+        self.carPlayInForeground.set(value)
+    }
 
     private var accountManager: AccountManager<TelegramAccountManagerTypes>?
     private var accountManagerState: AccountManagerState?
@@ -1213,7 +1224,7 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
                 application.endBackgroundTask(id)
             }, backgroundTimeRemaining: { application.backgroundTimeRemaining }, acquireIdleExtension: {
                 return applicationBindings.pushIdleTimerExtension()
-            }, activeAccounts: sharedContext.activeAccountContexts |> map { ($0.0?.account, $0.1.map { ($0.0, $0.1.account) }) }, liveLocationPolling: liveLocationPolling, watchTasks: .single(nil), inForeground: applicationBindings.applicationInForeground, hasActiveAudioSession: self.hasActiveAudioSession.get(), notificationManager: notificationManager, mediaManager: sharedContext.mediaManager, callManager: sharedContext.callManager, accountUserInterfaceInUse: { id in
+            }, activeAccounts: sharedContext.activeAccountContexts |> map { ($0.0?.account, $0.1.map { ($0.0, $0.1.account) }) }, liveLocationPolling: liveLocationPolling, watchTasks: .single(nil), inForeground: combineLatest(applicationBindings.applicationInForeground, self.carPlayInForeground.get()) |> map { phone, car in phone || car } |> distinctUntilChanged, hasActiveAudioSession: self.hasActiveAudioSession.get(), notificationManager: notificationManager, mediaManager: sharedContext.mediaManager, callManager: sharedContext.callManager, accountUserInterfaceInUse: { id in
                 return sharedContext.accountUserInterfaceInUse(id)
             }, presentationData: {
                 return sharedContext.currentPresentationData.with({ $0 })
@@ -1726,6 +1737,12 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
     }
     
     func application(_ application: UIApplication, configurationForConnecting connectingSceneSession: UISceneSession, options: UIScene.ConnectionOptions) -> UISceneConfiguration {
+        if connectingSceneSession.role == .carTemplateApplication {
+            let configuration = UISceneConfiguration(name: "CarPlay Configuration", sessionRole: connectingSceneSession.role)
+            configuration.sceneClass = CPTemplateApplicationScene.self
+            configuration.delegateClass = CarPlaySceneDelegate.self
+            return configuration
+        }
         let configuration = UISceneConfiguration(name: "Default Configuration", sessionRole: connectingSceneSession.role)
         // Only the application-role scene owns the app's window and drives app-wide life-cycle
         // state. Other roles (e.g. an external display) get no delegate at all, so they cannot

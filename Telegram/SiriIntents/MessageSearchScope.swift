@@ -15,11 +15,13 @@ enum MessageSearchScope: Equatable {
     case notifications([String])
     /// The messages Siri already knows by identifier (a "repeat", or a follow-up).
     case messages([MessageId])
+    /// A conversation selected in the CarPlay chat list, including a muted chat.
+    case conversations([PeerId])
     /// Every unread message, minus those behind the named notifications.
     case unread(excludingNotifications: [String])
 }
 
-func messageSearchScope(notificationIdentifiers: [String]?, notificationIdentifiersOperator: INConditionalOperator, identifiers: [String]?) -> MessageSearchScope {
+func messageSearchScope(notificationIdentifiers: [String]?, notificationIdentifiersOperator: INConditionalOperator, identifiers: [String]?, conversationIdentifiers: [String]? = nil, conversationIdentifiersOperator: INConditionalOperator = .any) -> MessageSearchScope {
     // Message identifiers are the ones this extension handed to Siri, so they name the exact
     // messages and need no lookup; they win over a notification link that may be missing.
     if let identifiers {
@@ -42,6 +44,21 @@ func messageSearchScope(notificationIdentifiers: [String]?, notificationIdentifi
         // Explicit identifiers this build cannot parse name nothing; do not widen to the backlog.
         return .messages([])
     }
+    if let conversationIdentifiers, !conversationIdentifiers.isEmpty {
+        let peerIds = Array(Set(conversationIdentifiers.compactMap { value -> PeerId? in
+            guard let value = Int64(value) else {
+                return nil
+            }
+            let peerId = PeerId(value)
+            return unreadMessagesIncludePeer(peerId) ? peerId : nil
+        })).sorted()
+        // A message cannot belong to two conversations at once. Unsupported or
+        // malformed explicit filters must never widen to reading unrelated chats.
+        if conversationIdentifiersOperator == .none || (conversationIdentifiersOperator == .all && peerIds.count != 1) {
+            return .conversations([])
+        }
+        return .conversations(peerIds)
+    }
     return .unread(excludingNotifications: [])
 }
 
@@ -49,6 +66,8 @@ func messageSearchScope(for intent: INSearchForMessagesIntent) -> MessageSearchS
     return messageSearchScope(
         notificationIdentifiers: intent.notificationIdentifiers,
         notificationIdentifiersOperator: intent.notificationIdentifiersOperator,
-        identifiers: intent.identifiers
+        identifiers: intent.identifiers,
+        conversationIdentifiers: intent.conversationIdentifiers,
+        conversationIdentifiersOperator: intent.conversationIdentifiersOperator
     )
 }

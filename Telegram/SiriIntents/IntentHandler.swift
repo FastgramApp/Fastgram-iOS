@@ -681,6 +681,10 @@ class DefaultIntentHandler: INExtension, INSendMessageIntentHandling, INSearchFo
                     }
                 case let .messages(ids):
                     messages = getMessages(account: account, ids: ids)
+                case let .conversations(peerIds):
+                    messages = unreadMessagesInConversations(postbox: account.postbox, peerIds: peerIds, history: { peerId, readState in
+                        return firstSettledValue(account.viewTracker.aroundMessageHistoryViewForLocation(.peer(peerId: peerId, threadId: nil), index: .upperBound, anchorIndex: .upperBound, count: 20, fixedCombinedReadStates: readState, orderStatistics: .combinedLocation) |> map { $0.0 }, isSettled: { !$0.isLoading }, timeout: unreadMessagesSettleTimeout)
+                    })
                 case let .unread(excludingNotifications):
                     if excludingNotifications.isEmpty {
                         messages = unreadMessages(account: account)

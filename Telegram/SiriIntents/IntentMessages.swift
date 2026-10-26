@@ -91,7 +91,7 @@ struct UnreadMessagesViews {
 
 /// How long the scan waits for a view to settle. Each chat list or history fill is one
 /// network round trip; Siri gives the extension about ten seconds in total.
-private let unreadMessagesSettleTimeout: Double = 3.0
+let unreadMessagesSettleTimeout: Double = 3.0
 
 /// "Read my messages" on a live account: the account's hole-filling views, settled. The
 /// raw store views emit nothing beneath a hole and never fill it, so a chat list or a chat
@@ -111,6 +111,45 @@ func unreadMessages(account: Account) -> Signal<[INMessage], NoError> {
             return firstSettledValue(account.viewTracker.aroundMessageHistoryViewForLocation(.peer(peerId: peerId, threadId: nil), index: .upperBound, anchorIndex: .upperBound, count: 10, fixedCombinedReadStates: fixedCombinedReadStates, orderStatistics: .combinedLocation) |> map { $0.0 }, isSettled: { !$0.isLoading }, timeout: unreadMessagesSettleTimeout)
         }
     ))
+}
+
+/// Explicit CarPlay selection bypasses the recent-chat window and mute filter,
+/// but only reads unread incoming messages in the selected cloud conversations.
+func unreadMessagesInConversations(postbox: Postbox, peerIds: [PeerId], history: @escaping (PeerId, MessageHistoryViewReadState?) -> Signal<MessageHistoryView, NoError>) -> Signal<[INMessage], NoError> {
+    let peerIds = Array(Set(peerIds.filter(unreadMessagesIncludePeer)))
+    guard !peerIds.isEmpty else {
+        return .single([])
+    }
+    return postbox.transaction { transaction -> [(PeerId, CombinedPeerReadState)] in
+        return peerIds.compactMap { peerId in
+            guard let readState = transaction.getCombinedPeerReadState(peerId), readState.count > 0 else {
+                return nil
+            }
+            return (peerId, readState)
+        }
+    }
+    |> mapToSignal { peers -> Signal<[INMessage], NoError> in
+        guard !peers.isEmpty else {
+            return .single([])
+        }
+        return combineLatest(peers.map { peerId, readState in
+            return history(peerId, .peer([peerId: readState]))
+            |> take(1)
+            |> map { view -> [INMessage] in
+                return view.entries.compactMap { entry in
+                    guard entry.message.id.peerId == peerId,
+                          entry.message.flags.contains(.Incoming),
+                          !readState.isIncomingMessageIndexRead(entry.message.index) else {
+                        return nil
+                    }
+                    return messageWithTelegramMessage(entry.message)
+                }
+            }
+        })
+        |> map { messages in
+            return messages.flatMap { $0 }.sorted { ($0.dateSent ?? .distantPast) < ($1.dateSent ?? .distantPast) }
+        }
+    }
 }
 
 /// The same scan over the raw store, for tests; a store without holes reads the same.

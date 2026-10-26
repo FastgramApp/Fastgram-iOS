@@ -102,6 +102,17 @@ final class UnreadMessagesScanTests: XCTestCase {
         XCTAssertEqual(self.scan().map { $0.content }, ["newer", "older"], self.storeState([self.alice, self.ride]))
     }
 
+    func testCarPlaySelectionExcludesOtherChatsAndReadMessages() {
+        self.seed(chat: self.alice, author: self.alice, messages: [(10, "already read"), (11, "selected")], readUpTo: 10)
+        self.seed(chat: self.ride, author: self.bob, messages: [(20, "unrelated")], readUpTo: 0)
+
+        let messages = self.store.first(unreadMessagesInConversations(postbox: self.postbox, peerIds: [self.alice.id], history: { peerId, readState in
+            return self.postbox.aroundMessageHistoryViewForLocation(.peer(peerId: peerId, threadId: nil), anchor: .upperBound, ignoreMessagesInTimestampRange: nil, ignoreMessageIds: Set(), count: 20, fixedCombinedReadStates: readState, topTaggedMessageIdNamespaces: Set(), tag: nil, appendMessagesFromTheSameGroup: false, namespaces: .not(Namespaces.Message.allNonRegular), orderStatistics: .combinedLocation)
+            |> map { $0.0 }
+        })) ?? []
+        XCTAssertEqual(messages.map { $0.content }, ["selected"])
+    }
+
     /// The store as the scan would see it, for failure messages.
     private func storeState(_ peers: [Peer]) -> String {
         var lines: [String] = []

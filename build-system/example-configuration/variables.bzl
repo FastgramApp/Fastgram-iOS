@@ -13,4 +13,5 @@ telegram_aps_environment = "production"
 telegram_enable_siri = True
 telegram_enable_icloud = True
 telegram_enable_communication_notifications = False
+telegram_enable_carplay = False
 telegram_enable_watch = True

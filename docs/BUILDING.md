@@ -59,6 +59,48 @@ Optional variables: `FASTGRAM_APPSTORE_ID`, `FASTGRAM_URL_SCHEME`, `FASTGRAM_APP
 `FASTGRAM_IS_INTERNAL_BUILD`, `FASTGRAM_IS_APPSTORE_BUILD`, `FASTGRAM_PREMIUM_IAP_PRODUCT_ID`,
 `FASTGRAM_ENABLE_SIRI`, `FASTGRAM_ENABLE_ICLOUD`, `FASTGRAM_ENABLE_COMMUNICATION_NOTIFICATIONS`.
 
+### CarPlay
+
+Set `"enable_carplay": true` in your local configuration (or
+`FASTGRAM_ENABLE_CARPLAY=true` when generating it) to enable the CarPlay chat
+list. `enable_siri` must also be true. The option is off by default because
+device builds need Apple's **CarPlay Communication** capability enabled for
+your App ID and a regenerated provisioning profile containing
+`com.apple.developer.carplay-communication`. Adding the configuration flag
+does not grant that capability to an existing profile.
+
+CarPlay communication also needs the Siri Intents extension. CarPlay builds keep
+that extension even when `--disableExtensions` is used by Xcode-managed signing.
+The extension uses its own `<bundle id>.SiriIntents` provisioning profile and the
+same App Group as the host, so Siri can access the current account.
+
+The CarPlay scene shows the current account's recent main-list conversations
+and unread indicators. Tapping a conversation invokes the system's messaging
+flow for that conversation. Message bodies are spoken, not displayed. Secret
+chats are excluded; the list is hidden while Fastgram's passcode lock is active.
+The phone and car have separate scene delegates, and the car keeps account
+syncing active while its scene is in the foreground.
+
+In Xcode 26's Simulator, select **I/O → External Displays → CarPlay** and launch
+Fastgram from the car's Home screen. Xcode 27 replaces Simulator with Device Hub;
+use its CarPlay Simulator with a compatible connected device if external
+displays are unavailable for the iOS simulator. Check a cold launch, updates to
+unread counts, passcode locking, account switching/logout, and disconnecting
+CarPlay while the phone stays open. Siri and the vehicle microphone still need
+testing on a physical CarPlay setup.
+
+Validation on 21 October 2026: the full `debug_sim_arm64` app build and
+`//Telegram:IntentsExtensionTests` passed using Xcode 27. The built app's scene
+manifest and entitlements contain the CarPlay configuration, and the phone app
+launches in the iOS 26.5 simulator. The car display itself is not yet verified:
+this Device Hub setup did not offer an external CarPlay display for that
+simulator. Real-device visibility requires a CarPlay-enabled signing profile.
+
+Validation on 26 October 2026: Xcode MCP built and launched the device app with
+the CarPlay Communication entitlement and an embedded, signed
+`IntentsExtension.appex`. Its profile and signed entitlements include the host's
+App Group. The CarPlay icon appeared in the connected CarPlay Simulator session.
+
 ## 3. Build for the simulator
 
 Simulator builds need no code signing:
@@ -68,7 +110,7 @@ python3 build-system/Make/Make.py \
   --cacheDir="$HOME/telegram-bazel-cache" \
   build \
   --configurationPath=build-system/fastgram-local-configuration.json \
-  --disableProvisioningProfiles \
+  --xcodeManagedCodesigning \
   --buildNumber=1 \
   --configuration=debug_sim_arm64
 ```

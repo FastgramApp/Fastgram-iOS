@@ -22,7 +22,8 @@ class BuildConfiguration:
         premium_iap_product_id,
         enable_siri,
         enable_icloud,
-        enable_communication_notifications
+        enable_communication_notifications,
+        enable_carplay=False
     ):
         self.bundle_id = bundle_id
         self.api_id = api_id
@@ -37,6 +38,9 @@ class BuildConfiguration:
         self.enable_siri = enable_siri
         self.enable_icloud = enable_icloud
         self.enable_communication_notifications = enable_communication_notifications
+        self.enable_carplay = enable_carplay
+        if enable_carplay and not enable_siri:
+            raise ValueError('CarPlay communication requires enable_siri')
 
     def write_to_variables_file(self, bazel_path, use_xcode_managed_codesigning, aps_environment, path):
         string = ''
@@ -56,6 +60,7 @@ class BuildConfiguration:
         string += 'telegram_enable_siri = {}\n'.format(self.enable_siri)
         string += 'telegram_enable_icloud = {}\n'.format(self.enable_icloud)
         string += 'telegram_enable_communication_notifications = {}\n'.format(self.enable_communication_notifications)
+        string += 'telegram_enable_carplay = {}\n'.format(self.enable_carplay)
         string += 'telegram_enable_watch = True\n'
 
         if os.path.exists(path):
@@ -100,7 +105,8 @@ def build_configuration_from_json(path):
             premium_iap_product_id=configuration_dict['premium_iap_product_id'],
             enable_siri=configuration_dict['enable_siri'],
             enable_icloud=configuration_dict['enable_icloud'],
-            enable_communication_notifications=configuration_dict.get('enable_communication_notifications', False)
+            enable_communication_notifications=configuration_dict.get('enable_communication_notifications', False),
+            enable_carplay=configuration_dict.get('enable_carplay', False)
         )
 
 

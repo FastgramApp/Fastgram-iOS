@@ -91,6 +91,25 @@ final class MessageSearchScopeTests: XCTestCase {
         XCTAssertEqual(scope, .unread(excludingNotifications: []))
     }
 
+    func testCarPlaySelectionOnlyReadsTheSelectedConversation() {
+        let peerId = self.messageId(1).peerId
+        XCTAssertEqual(messageSearchScope(notificationIdentifiers: nil, notificationIdentifiersOperator: .any, identifiers: nil, conversationIdentifiers: [String(peerId.toInt64())]), .conversations([peerId]))
+    }
+
+    func testInvalidCarPlaySelectionDoesNotReadTheUnreadBacklog() {
+        XCTAssertEqual(messageSearchScope(notificationIdentifiers: nil, notificationIdentifiersOperator: .any, identifiers: nil, conversationIdentifiers: ["garbage"]), .conversations([]))
+    }
+
+    func testCarPlayConversationIsReadOffTheSystemIntent() {
+        let peerId = self.messageId(1).peerId
+        let intent = INSearchForMessagesIntent(recipients: nil, senders: nil, searchTerms: nil, attributes: .unread, dateTime: nil, identifiers: nil, notificationIdentifiers: nil, speakableGroupNames: nil, conversationIdentifiers: [String(peerId.toInt64())])
+        XCTAssertEqual(messageSearchScope(for: intent), .conversations([peerId]))
+    }
+
+    func testExcludedCarPlayConversationDoesNotWidenTheSearch() {
+        XCTAssertEqual(messageSearchScope(notificationIdentifiers: nil, notificationIdentifiersOperator: .any, identifiers: nil, conversationIdentifiers: [String(self.messageId(1).peerId.toInt64())], conversationIdentifiersOperator: .none), .conversations([]))
+    }
+
     func testScopeIsReadOffTheIntent() {
         let intent = INSearchForMessagesIntent(
             recipients: nil,

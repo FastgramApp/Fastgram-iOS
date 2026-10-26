@@ -50,6 +50,7 @@ def required_environment():
         "app_specific_url_scheme": environment_or_default("FASTGRAM_URL_SCHEME", "fastgram"),
         "premium_iap_product_id": os.environ.get("FASTGRAM_PREMIUM_IAP_PRODUCT_ID") or "",
         "enable_siri": environment_or_default("FASTGRAM_ENABLE_SIRI", "true").lower() == "true",
+        "enable_carplay": environment_or_default("FASTGRAM_ENABLE_CARPLAY", "false").lower() == "true",
         "enable_icloud": environment_or_default("FASTGRAM_ENABLE_ICLOUD", "false").lower() == "true",
         "enable_communication_notifications": environment_or_default(
             "FASTGRAM_ENABLE_COMMUNICATION_NOTIFICATIONS", "true"

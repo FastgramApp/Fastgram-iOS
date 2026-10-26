@@ -58,6 +58,7 @@ load(
     "telegram_app_specific_url_scheme",
     "telegram_enable_icloud",
     "telegram_enable_communication_notifications",
+    "telegram_enable_carplay",
     "telegram_enable_siri",
 )
 
@@ -490,7 +491,12 @@ official_carplay_fragment = """
 <key>com.apple.developer.carplay-messaging</key>
 <true/>
 """
-carplay_fragment = official_carplay_fragment if telegram_bundle_id in official_bundle_ids else ""
+# The modern entitlement enables our template scene. Keep legacy Siri-only support
+# for official IDs unless the build explicitly opts into the new interface.
+carplay_fragment = """
+<key>com.apple.developer.carplay-communication</key>
+<true/>
+""" if telegram_enable_carplay else (official_carplay_fragment if telegram_bundle_id in official_bundle_ids else "")
 
 icloud_fragment = "" if not telegram_enable_icloud else """
 <key>com.apple.developer.icloud-services</key>
@@ -1411,6 +1417,29 @@ ios_unit_test(
     ]
 )'''
 
+plist_fragment(
+    name = "IntentsEntitlements",
+    extension = "entitlements",
+    template = """
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <string>group.{telegram_bundle_id}</string>
+    </array>
+    """.format(telegram_bundle_id = telegram_bundle_id),
+)
+
+local_provisioning_profile(
+    name = "Intents_local_profile",
+    profile_name = "iOS Team Provisioning Profile: {}.SiriIntents".format(telegram_bundle_id),
+    team_id = telegram_team_id,
+)
+
+xcode_provisioning_profile(
+    name = "Intents_xcode_profile",
+    managed_by_xcode = True,
+    provisioning_profile = ":Intents_local_profile",
+)
+
 ios_extension(
     name = "IntentsExtension",
     bundle_id = "{telegram_bundle_id}.SiriIntents".format(
@@ -1431,8 +1460,9 @@ ios_extension(
     #ipa_post_processor = ":SetMinOsVersionIntentsExtension",
     provisioning_profile = select({
         ":disableProvisioningProfilesSetting": None,
-        "//conditions:default": "@build_configuration//provisioning:Intents.mobileprovision",
+        "//conditions:default": ":Intents_xcode_profile" if telegram_use_xcode_managed_codesigning else "@build_configuration//provisioning:Intents.mobileprovision",
     }),
+    entitlements = ":IntentsEntitlements.entitlements",
     deps = [":IntentsExtensionLib"],
     frameworks = [
         ":SwiftSignalKitFramework",
@@ -1722,6 +1752,17 @@ plist_fragment(
                     <string>SceneDelegate</string>
                 </dict>
             </array>
+            <key>CPTemplateApplicationSceneSessionRoleApplication</key>
+            <array>
+                <dict>
+                    <key>UISceneClassName</key>
+                    <string>CPTemplateApplicationScene</string>
+                    <key>UISceneConfigurationName</key>
+                    <string>CarPlay Configuration</string>
+                    <key>UISceneDelegateClassName</key>
+                    <string>CarPlaySceneDelegate</string>
+                </dict>
+            </array>
         </dict>
     </dict>
     <key>UIBackgroundModes</key>
@@ -1861,7 +1902,8 @@ ios_application(
         ":AppStringResources",
     ],
     extensions = select({
-        ":disableExtensionsSetting": [],
+        # Communication apps need SiriKit even in the minimal Xcode-managed build.
+        ":disableExtensionsSetting": [":IntentsExtension"] if telegram_enable_carplay else [],
         "//conditions:default": [
             ":ShareExtension",
             ":NotificationContentExtension",
