@@ -25,7 +25,7 @@
 			<string>INSearchForMessagesIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Fastgram에서 앨리스가 보낸 메시지를 찾아 줘</string>
+				<string>Fastgram에서 읽지 않은 내 메시지를 읽어 줘</string>
 			</array>
 		</dict>
 		<dict>
@@ -33,7 +33,7 @@
 			<string>INSetMessageAttributeIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Fastgram에서 앨리스의 최근 메시지를 읽음으로 표시해 줘</string>
+				<string>Fastgram에서 내 메시지를 읽음으로 표시해 줘</string>
 			</array>
 		</dict>
 		<dict>
@@ -41,7 +41,7 @@
 			<string>INSearchCallHistoryIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Fastgram의 최근 통화를 보여 줘</string>
+				<string>Fastgram에서 내 부재중 전화를 보여 줘</string>
 			</array>
 		</dict>
 	</array>

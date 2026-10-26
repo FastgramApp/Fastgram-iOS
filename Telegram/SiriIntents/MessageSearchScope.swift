@@ -1,6 +1,6 @@
 import Foundation
 import Intents
-import Postbox
+import TelegramCore
 
 /// What an `INSearchForMessagesIntent` is asking for.
 ///
@@ -14,9 +14,9 @@ enum MessageSearchScope: Equatable {
     /// Only the messages the named delivered notifications stand for.
     case notifications([String])
     /// The messages Siri already knows by identifier (a "repeat", or a follow-up).
-    case messages([MessageId])
+    case messages([EngineMessage.Id])
     /// A conversation selected in the CarPlay chat list, including a muted chat.
-    case conversations([PeerId])
+    case conversations([EnginePeer.Id])
     /// Every unread message, minus those behind the named notifications.
     case unread(excludingNotifications: [String])
 }
@@ -25,7 +25,7 @@ func messageSearchScope(notificationIdentifiers: [String]?, notificationIdentifi
     // Message identifiers are the ones this extension handed to Siri, so they name the exact
     // messages and need no lookup; they win over a notification link that may be missing.
     if let identifiers {
-        let messageIds = identifiers.compactMap(MessageId.init(string:))
+        let messageIds = identifiers.compactMap(EngineMessage.Id.init(string:))
         if !messageIds.isEmpty {
             return .messages(messageIds)
         }
@@ -45,11 +45,11 @@ func messageSearchScope(notificationIdentifiers: [String]?, notificationIdentifi
         return .messages([])
     }
     if let conversationIdentifiers, !conversationIdentifiers.isEmpty {
-        let peerIds = Array(Set(conversationIdentifiers.compactMap { value -> PeerId? in
+        let peerIds = Array(Set(conversationIdentifiers.compactMap { value -> EnginePeer.Id? in
             guard let value = Int64(value) else {
                 return nil
             }
-            let peerId = PeerId(value)
+            let peerId = EnginePeer.Id(value)
             return unreadMessagesIncludePeer(peerId) ? peerId : nil
         })).sorted()
         // A message cannot belong to two conversations at once. Unsupported or
