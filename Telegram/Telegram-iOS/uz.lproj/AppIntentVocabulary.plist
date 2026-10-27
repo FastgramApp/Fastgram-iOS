@@ -17,7 +17,7 @@
 			<string>INStartAudioCallIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Fastgram orqali Aleksga qoʻngʻiroq qil</string>
+				<string>Fastgram orqali Alisaga qo‘ng‘iroq qil</string>
 			</array>
 		</dict>
 		<dict>
@@ -25,7 +25,7 @@
 			<string>INSearchForMessagesIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Fastgramda Aleksdan kelgan xabarlarni qidir</string>
+				<string>Fastgramdagi o‘qilmagan xabarlarimni o‘qib ber</string>
 			</array>
 		</dict>
 		<dict>
@@ -33,7 +33,7 @@
 			<string>INSetMessageAttributeIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Fastgramda Aleksning oxirgi xabarini oʻqilgan deb belgila</string>
+				<string>Fastgramdagi xabarlarimni o‘qilgan deb belgilab qo‘y</string>
 			</array>
 		</dict>
 		<dict>
@@ -41,7 +41,7 @@
 			<string>INSearchCallHistoryIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Fastgramdagi soʻnggi qoʻngʻiroqlarimni koʻrsat</string>
+				<string>Fastgramdagi javobsiz qo‘ng‘iroqlarimni ko‘rsat</string>
 			</array>
 		</dict>
 	</array>

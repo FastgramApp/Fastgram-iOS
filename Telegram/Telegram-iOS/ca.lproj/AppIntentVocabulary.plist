@@ -17,7 +17,7 @@
 			<string>INStartAudioCallIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Truca a l’Àlex amb Fastgram</string>
+				<string>Truca a l&apos;Alícia per Fastgram</string>
 			</array>
 		</dict>
 		<dict>
@@ -25,7 +25,7 @@
 			<string>INSearchForMessagesIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Cerca els missatges de l’Àlex a Fastgram</string>
+				<string>Llegeix els meus missatges no llegits a Fastgram</string>
 			</array>
 		</dict>
 		<dict>
@@ -33,7 +33,7 @@
 			<string>INSetMessageAttributeIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Marca l’últim missatge de l’Àlex com a llegit a Fastgram</string>
+				<string>Marca els meus missatges de Fastgram com a llegits</string>
 			</array>
 		</dict>
 		<dict>
@@ -41,7 +41,7 @@
 			<string>INSearchCallHistoryIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Mostra les meves trucades recents de Fastgram</string>
+				<string>Mostra les meves trucades perdudes a Fastgram</string>
 			</array>
 		</dict>
 	</array>

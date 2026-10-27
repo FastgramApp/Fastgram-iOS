@@ -17,7 +17,7 @@
 			<string>INStartAudioCallIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Chiama Alex con Fastgram</string>
+				<string>Chiama Alice su Fastgram</string>
 			</array>
 		</dict>
 		<dict>
@@ -25,7 +25,7 @@
 			<string>INSearchForMessagesIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Cerca i messaggi di Alex su Fastgram</string>
+				<string>Leggi i miei messaggi non letti su Fastgram</string>
 			</array>
 		</dict>
 		<dict>
@@ -33,7 +33,7 @@
 			<string>INSetMessageAttributeIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Segna come letto l’ultimo messaggio di Alex su Fastgram</string>
+				<string>Segna i miei messaggi su Fastgram come letti</string>
 			</array>
 		</dict>
 		<dict>
@@ -41,7 +41,7 @@
 			<string>INSearchCallHistoryIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Mostra le mie chiamate recenti su Fastgram</string>
+				<string>Mostra le mie chiamate perse su Fastgram</string>
 			</array>
 		</dict>
 	</array>

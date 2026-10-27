@@ -25,7 +25,7 @@
 			<string>INSearchForMessagesIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Знайди повідомлення від Аліси у Fastgram</string>
+				<string>Прочитай мої непрочитані повідомлення в Fastgram</string>
 			</array>
 		</dict>
 		<dict>
@@ -33,7 +33,7 @@
 			<string>INSetMessageAttributeIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Познач останнє повідомлення від Аліси у Fastgram як прочитане</string>
+				<string>Познач мої повідомлення в Fastgram як прочитані</string>
 			</array>
 		</dict>
 		<dict>
@@ -41,7 +41,7 @@
 			<string>INSearchCallHistoryIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Покажи мої останні дзвінки у Fastgram</string>
+				<string>Покажи мої пропущені виклики в Fastgram</string>
 			</array>
 		</dict>
 	</array>

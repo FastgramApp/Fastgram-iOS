@@ -17,7 +17,7 @@
 			<string>INStartAudioCallIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Fastgram ile Alex’i ara</string>
+				<string>Fastgram üzerinden Ayşe&apos;yi ara</string>
 			</array>
 		</dict>
 		<dict>
@@ -25,7 +25,7 @@
 			<string>INSearchForMessagesIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Fastgram’da Alex’ten gelen mesajları ara</string>
+				<string>Fastgram&apos;daki okunmamış mesajlarımı oku</string>
 			</array>
 		</dict>
 		<dict>
@@ -33,7 +33,7 @@
 			<string>INSetMessageAttributeIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Fastgram’da Alex’ten gelen son mesajı okundu olarak işaretle</string>
+				<string>Fastgram&apos;daki mesajlarımı okundu olarak işaretle</string>
 			</array>
 		</dict>
 		<dict>
@@ -41,7 +41,7 @@
 			<string>INSearchCallHistoryIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Son Fastgram aramalarımı göster</string>
+				<string>Fastgram&apos;daki cevapsız aramalarımı göster</string>
 			</array>
 		</dict>
 	</array>
