@@ -1004,7 +1004,6 @@ public class VideoMessageCameraScreen: ViewController {
             self.previewContainerView.addSubview(self.previewContainerContentView)
 
             // MultiCam policy depends on the selected round-video mode.
-            let experimentalSettings = self.context.sharedContext.immediateExperimentalUISettings
             switch experimentalSettings.roundVideoBenchmarkMode {
             case 1:
                 Camera.roundVideoBenchmarkMode = Camera.isIpad ? .vanilla : .optimizedCurrentResolution
