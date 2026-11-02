@@ -23,14 +23,37 @@ python3 build-system/Make/Make.py \
   build \
   --configurationPath /path/to/private-release-configuration.json \
   --codesigningInformationPath "$HOME/Documents/Fastgram/Signing" \
-  --buildNumber 10 \
+  --buildNumber 11 \
   --configuration release_arm64
 ```
+
+`release_arm64` selects optimized device code (`-c opt`, `arm64`), Swift
+whole-module optimization and `-Osize`, Rust fat LTO, dead stripping, binary
+stripping, and dSYM generation. These are supplied by `Make.py`; they do not need
+to be repeated on the command line. Do not pass `--disableExtensions`,
+`--disableProvisioningProfiles`, or `--xcodeManagedCodesigning` to this distribution
+build. The watch CPU setting emitted by the wrapper does not embed the watch app;
+previous releases did not use `--embedWatchApp`.
+
+`--overrideXcodeVersion` only allows the installed Xcode to differ from the pinned
+version. It is unnecessary when they match. After an Xcode update, if Bazel still
+discovers an older installation, set `XCODE_VERSION` to the installed build ID and
+`DEVELOPER_DIR` to its developer directory for the invocation. Build 10 used
+`XCODE_VERSION=27A9275` and
+`DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`.
 
 The configuration uses Fastgram's bundle ID and team, `is_appstore_build=true`,
 `is_internal_build=false`, and the release's intended capabilities. For a build
 from the separate CarPlay branch, its distribution profile must also contain
 CarPlay Communication if that feature is enabled.
+
+Audit on 2 November 2026: the compiled BuildConfig methods in archived builds 9
+and 10 return App Store=true, internal=false, Siri=true, and iCloud=false. Their
+App Store profiles have production APNs, communication notifications, the same
+App Group, and debugging disabled; both include all six app extensions. Build 9
+used Xcode 26.5 and supported iOS 13+, whereas build 10 used Xcode 27.1 and the
+upstream iOS 15+ minimum. Keep an audit of the effective flags, signed
+entitlements, profiles, and compiled BuildConfig values with each release archive.
 
 ## Archive and verify
 
