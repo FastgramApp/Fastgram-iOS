@@ -89,6 +89,7 @@ public enum Camera {
         public let preferLowerFramerate: Bool
         public let reportAudioLevel: Bool
         public let isRoundVideo: Bool
+        public let captureMode: CameraCaptureMode?
 
         public init(
             preset: Preset,
@@ -100,7 +101,8 @@ public enum Camera {
             preferWide: Bool = false,
             preferLowerFramerate: Bool = false,
             reportAudioLevel: Bool = false,
-            isRoundVideo: Bool = false
+            isRoundVideo: Bool = false,
+            captureMode: CameraCaptureMode? = nil
         ) {
             self.preset = preset
             self.position = position
@@ -112,6 +114,7 @@ public enum Camera {
             self.preferLowerFramerate = preferLowerFramerate
             self.reportAudioLevel = reportAudioLevel
             self.isRoundVideo = isRoundVideo
+            self.captureMode = captureMode
         }
     }
 
@@ -119,6 +122,7 @@ public enum Camera {
         case none
         case position
         case dualCamera
+        case captureMode
     }
 }
 
@@ -132,9 +136,11 @@ public protocol CameraProtocol: AnyObject {
     func togglePosition()
     func setPosition(_ position: Camera.Position)
     func setDualCameraEnabled(_ enabled: Bool)
+    func setCaptureMode(_ mode: CameraCaptureMode) -> Signal<Void, NoError>
 
     func takePhoto() -> Signal<PhotoCaptureResult, NoError>
     func startRecording() -> Signal<CameraRecordingData, CameraRecordingError>
+    func startRecording(captureMode: CameraCaptureMode) -> Signal<CameraRecordingData, CameraRecordingError>
     func stopRecording() -> Signal<VideoCaptureResult, NoError>
 
     func focus(at point: CGPoint, autoFocus: Bool)
@@ -142,6 +148,10 @@ public protocol CameraProtocol: AnyObject {
     func setFlashMode(_ flashMode: Camera.FlashMode)
     func setZoomLevel(_ zoomLevel: CGFloat)
     func setZoomDelta(_ zoomDelta: CGFloat)
+    func setZoomScale(_ zoomScale: CGFloat)
+    func beginExposureTargetBiasChange()
+    func setExposureTargetBias(_ bias: CGFloat)
+    func endExposureTargetBiasChange()
     func rampZoom(_ zoomLevel: CGFloat, rate: CGFloat)
     func setTorchActive(_ active: Bool)
 
