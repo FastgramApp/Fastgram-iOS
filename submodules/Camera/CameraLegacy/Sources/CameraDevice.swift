@@ -9,6 +9,7 @@ private let defaultFPS: Double = 30.0
 
 final class CameraDevice {
     var position: Camera.Position = .back
+    var queue: Queue?
     
     deinit {
         if let videoDevice = self.videoDevice {
@@ -64,16 +65,37 @@ final class CameraDevice {
         }
     }
     
+    private(set) var photoDimensions: CMVideoDimensions?
+
     // Capped round-video modes rank eligible formats explicitly and fall back to the default
     // dimensions when a device exposes no format under the requested cap.
-    func configureDeviceFormat(maxDimensions: CMVideoDimensions, maxFramerate: Double, requireMultiCamSupported: Bool = false, preferBinned: Bool = false, fallbackDimensions: CMVideoDimensions? = nil) {
+    func configureDeviceFormat(maxDimensions: CMVideoDimensions, maxFramerate: Double, requireMultiCamSupported: Bool = false, preferBinned: Bool = false, fallbackDimensions: CMVideoDimensions? = nil, captureMode: CameraCaptureMode? = nil) {
         guard let device = self.videoDevice else {
             return
         }
+        self.photoDimensions = nil
         self.transaction(device) { device in
             let bestFormat: AVCaptureDevice.Format?
             if preferBinned {
                 bestFormat = self.selectRoundVideoFormat(for: device, maxDimensions: maxDimensions, requireMultiCamSupported: requireMultiCamSupported, fallbackDimensions: fallbackDimensions)
+            } else if let captureMode {
+                var formats: [AVCaptureDevice.Format] = []
+                var descriptors: [CameraFormatDescriptor] = []
+                for format in device.formats {
+                    if format.mediaType != .video || format.value(forKey: "isPhotoFormat") as? Bool == true {
+                        continue
+                    }
+                    descriptors.append(cameraFormatDescriptor(format, index: formats.count))
+                    formats.append(format)
+                }
+                if let descriptor = cameraPreferredFormat(formats: descriptors, mode: captureMode, maxFramerate: maxFramerate) {
+                    bestFormat = formats[descriptor.index]
+                    if captureMode == .photo, let dimensions = cameraPreferredPhotoDimensions(for: descriptor) {
+                        self.photoDimensions = CMVideoDimensions(width: dimensions.width, height: dimensions.height)
+                    }
+                } else {
+                    bestFormat = nil
+                }
             } else {
                 bestFormat = self.selectLegacyFormat(for: device, maxDimensions: maxDimensions, maxFramerate: maxFramerate)
             }
@@ -274,7 +296,13 @@ photoOuter: for format in photoCandidates {
     }
     
     @objc private func subjectAreaChanged() {
-        self.setFocusPoint(CGPoint(x: 0.5, y: 0.5), focusMode: .continuousAutoFocus, exposureMode: .continuousAutoExposure, monitorSubjectAreaChange: false)
+        if let queue = self.queue {
+            queue.async { [weak self] in
+                self?.setFocusPoint(CGPoint(x: 0.5, y: 0.5), focusMode: .continuousAutoFocus, exposureMode: .continuousAutoExposure, monitorSubjectAreaChange: false)
+            }
+        } else {
+            self.setFocusPoint(CGPoint(x: 0.5, y: 0.5), focusMode: .continuousAutoFocus, exposureMode: .continuousAutoExposure, monitorSubjectAreaChange: false)
+        }
     }
     
     private(set) var fps: Double = defaultFPS
@@ -328,10 +356,13 @@ photoOuter: for format in photoCandidates {
         }
     }
     
+    private(set) var focusPoint = CGPoint(x: 0.5, y: 0.5)
+    
     func setFocusPoint(_ point: CGPoint, focusMode: Camera.FocusMode, exposureMode: Camera.ExposureMode, monitorSubjectAreaChange: Bool) {
         guard let device = self.videoDevice else {
             return
         }
+        self.focusPoint = point
         self.transaction(device) { device in
             if device.isExposurePointOfInterestSupported && device.isExposureModeSupported(exposureMode) {
                 device.exposurePointOfInterest = point
@@ -415,6 +446,29 @@ photoOuter: for format in photoCandidates {
         }
     }
     
+    func setZoomScale(_ zoomScale: CGFloat) {
+        guard let device = self.videoDevice else {
+            return
+        }
+        self.transaction(device) { device in
+            let target = device.neutralZoomFactor * zoomScale
+            device.videoZoomFactor = self.clampedZoomFactor(target, for: device)
+        }
+    }
+
+    var zoomFactor: CGFloat? {
+        return self.videoDevice?.videoZoomFactor
+    }
+
+    func setZoomFactor(_ zoomFactor: CGFloat) {
+        guard let device = self.videoDevice else {
+            return
+        }
+        self.transaction(device) { device in
+            device.videoZoomFactor = self.clampedZoomFactor(zoomFactor, for: device)
+        }
+    }
+
     func rampZoom(_ zoomLevel: CGFloat, rate: CGFloat) {
         guard let device = self.videoDevice else {
             return
@@ -440,4 +494,27 @@ photoOuter: for format in photoCandidates {
         let maximum = max(minimum, device.maxAvailableVideoZoomFactor)
         return min(maximum, max(minimum, value))
     }
+}
+
+private func cameraFormatDescriptor(_ format: AVCaptureDevice.Format, index: Int) -> CameraFormatDescriptor {
+    let dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+    let subtype = CMFormatDescriptionGetMediaSubType(format.formatDescription)
+    var hasSecondaryZoomLevels = false
+    var maxPhotoDimensions: [CameraFormatDescriptor.Dimensions] = []
+    if #available(iOS 16.0, *) {
+        hasSecondaryZoomLevels = !format.secondaryNativeResolutionZoomFactors.isEmpty
+        maxPhotoDimensions = format.supportedMaxPhotoDimensions.map { CameraFormatDescriptor.Dimensions(width: $0.width, height: $0.height) }
+    } else {
+        let highResolution = format.highResolutionStillImageDimensions
+        maxPhotoDimensions = [CameraFormatDescriptor.Dimensions(width: highResolution.width, height: highResolution.height)]
+    }
+    return CameraFormatDescriptor(
+        index: index,
+        dimensions: CameraFormatDescriptor.Dimensions(width: dimensions.width, height: dimensions.height),
+        isVideoRange420: subtype == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+        maxFrameRates: format.videoSupportedFrameRateRanges.map { $0.maxFrameRate },
+        hasSecondaryZoomLevels: hasSecondaryZoomLevels,
+        isHighPhotoQualitySupported: format.isHighPhotoQualitySupported,
+        maxPhotoDimensions: maxPhotoDimensions
+    )
 }
