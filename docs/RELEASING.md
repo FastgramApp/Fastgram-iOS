@@ -2,8 +2,10 @@
 
 Fastgram's previous releases were built locally with Bazel, signed with Apple
 Distribution, and uploaded as an IPA using Apple's Transporter app. The latest
-local archive before the October 2026 upstream sync was **1.0 (9)**, built from
-`de873252c7`.
+local archive is **1.0 (12)**, built from `a2c504e3d7` against Telegram 13.2
+(`24638bc69b`). The IPA, dSYMs, release audit and checksums are in
+`~/Documents/Fastgram/Releases/1.0 (12)/`. Upload and TestFlight processing are
+separate steps and have not been verified by the local release audit.
 
 ## Build
 
@@ -23,7 +25,7 @@ python3 build-system/Make/Make.py \
   build \
   --configurationPath /path/to/private-release-configuration.json \
   --codesigningInformationPath "$HOME/Documents/Fastgram/Signing" \
-  --buildNumber 11 \
+  --buildNumber 12 \
   --configuration release_arm64
 ```
 
@@ -47,6 +49,10 @@ The configuration uses Fastgram's bundle ID and team, `is_appstore_build=true`,
 from the separate CarPlay branch, its distribution profile must also contain
 CarPlay Communication if that feature is enabled.
 
+In the JSON configuration, `is_appstore_build` and `is_internal_build` are the
+lowercase strings `"true"` and `"false"`; `enable_*` capability flags are JSON
+booleans. Preserve these types when preparing a private release configuration.
+
 Audit on 2 November 2026: the compiled BuildConfig methods in archived builds 9
 and 10 return App Store=true, internal=false, Siri=true, and iCloud=false. Their
 App Store profiles have production APNs, communication notifications, the same
@@ -54,6 +60,15 @@ App Group, and debugging disabled; both include all six app extensions. Build 9
 used Xcode 26.5 and supported iOS 13+, whereas build 10 used Xcode 27.1 and the
 upstream iOS 15+ minimum. Keep an audit of the effective flags, signed
 entitlements, profiles, and compiled BuildConfig values with each release archive.
+
+Audit on 17 November 2026: build 12 preserves the same compiled flags, production
+APNs, communication notifications and App Group. All seven bundles pass deep
+strict signature verification with valid App Store profiles; all six extensions
+are included and all 12 dSYM UUIDs match their shipped binaries. Swift compiler
+parameters confirm WMO, `-Osize`, debug symbols and no `DEBUG` define. Xcode 27.1
+and the iOS 15+ minimum are unchanged from build 11. CarPlay and Watch are
+excluded. The 48 build-system tests, Camera tests, WebRTC NetEq regression test
+and the build wrapper's non-public ICU import scan passed.
 
 ## Archive and verify
 
